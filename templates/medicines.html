@@ -6,13 +6,25 @@
 <p><a href="{{ url_for('inventory.add_medicine_view') }}">+ Add Medicine</a></p>
 {% endif %}
 <table>
-  <tr><th>Name</th><th>Category</th><th>Stock (base units)</th><th>Threshold</th><th></th></tr>
+  <tr><th>Photo</th><th>Name</th><th>Category</th><th>Stock (base units)</th><th>Threshold</th><th>Unit Prices</th><th></th></tr>
   {% for m in medicines %}
   <tr class="{{ 'low-stock' if m['stock_in_base_units'] < m['low_stock_threshold'] else '' }}">
+    <td>
+      {% if m['photo_path'] %}
+      <img src="{{ url_for('static', filename=m['photo_path']) }}" width="60" alt="{{ m['name'] }}">
+      {% endif %}
+    </td>
     <td>{{ m['name'] }}</td>
     <td>{{ m['category'] }}</td>
     <td>{{ m['stock_in_base_units'] }}</td>
     <td>{{ m['low_stock_threshold'] }}</td>
+    <td>
+      <ul class="price-breakdown">
+        {% for b in price_breakdowns[m['id']] %}
+        <li>{{ b['unit_name'] }}: {{ "%.2f"|format(b['price']) }} ({{ "%.2f"|format(b['price_per_base_unit']) }}/base unit)</li>
+        {% endfor %}
+      </ul>
+    </td>
     <td>
       {% if session.get('role') == 'admin' %}
       <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}">Add Stock</a>

@@ -7,6 +7,7 @@ table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 th, td { border: 1px solid #ccc; padding: 0.4rem; text-align: left; }
 label { display: block; margin: 0.5rem 0; }
 .low-stock { color: #a00; font-weight: bold; }
+.price-breakdown { margin: 0; padding-left: 1rem; }
 @media print {
   nav, .no-print { display: none; }
 }

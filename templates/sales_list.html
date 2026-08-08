@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Sales History{% endblock %}
+{% block content %}
+<h1>Sales History</h1>
+<table>
+  <tr><th>Date/Time</th><th>Total</th><th>Status</th><th></th></tr>
+  {% for s in sales %}
+  <tr>
+    <td>{{ s['timestamp'] }}</td>
+    <td>{{ "%.2f"|format(s['total']) }}</td>
+    <td>{{ "Voided" if s['voided'] else "Completed" }}</td>
+    <td><a href="{{ url_for('sales.receipt', sale_id=s['id']) }}">Receipt</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% if not sales %}
+<p>No sales recorded yet.</p>
+{% endif %}
+{% endblock %}
