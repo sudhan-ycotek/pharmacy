@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Staff Accounts{% endblock %}
+{% block content %}
+<h1>Staff Accounts</h1>
+<table>
+  <tr><th>Username</th><th></th></tr>
+  {% for s in staff %}
+  <tr>
+    <td>{{ s['username'] }}</td>
+    <td>
+      <form method="post" action="{{ url_for('users.delete_user', user_id=s['id']) }}" class="inline-form">
+        <button type="submit">Remove</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Add Staff Account</h2>
+<form method="post" action="{{ url_for('users.add_user') }}">
+  <label>Username <input type="text" name="username" required></label>
+  <label>Password <input type="password" name="password" required></label>
+  <button type="submit">Add</button>
+</form>
+{% endblock %}
