@@ -1,8 +1,8 @@
 __pycache__/
 *.pyc
+venv/
 pharmacy.db
 secret_key.txt
-static/photos/*.jpg
-static/photos/*.png
+static/photos/*
 !static/photos/.gitkeep
 .pytest_cache/
