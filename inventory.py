@@ -2,11 +2,12 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from auth import role_required
 from db import get_db
+from photos import get_token_photo
 
 bp = Blueprint("inventory", __name__, url_prefix="/medicines")
 
 
-def add_medicine(name, category, low_stock_threshold, units):
+def add_medicine(name, category, low_stock_threshold, units, photo_path=None):
     if not units:
         raise ValueError("medicine must have at least one unit")
 
@@ -23,9 +24,9 @@ def add_medicine(name, category, low_stock_threshold, units):
 
     db = get_db()
     cur = db.execute(
-        "INSERT INTO medicines (name, category, stock_in_base_units, low_stock_threshold) "
-        "VALUES (?, ?, 0, ?)",
-        (name, category, low_stock_threshold),
+        "INSERT INTO medicines (name, category, photo_path, stock_in_base_units, low_stock_threshold) "
+        "VALUES (?, ?, ?, 0, ?)",
+        (name, category, photo_path, low_stock_threshold),
     )
     medicine_id = cur.lastrowid
     for u in units:
@@ -36,6 +37,12 @@ def add_medicine(name, category, low_stock_threshold, units):
         )
     db.commit()
     return medicine_id
+
+
+def set_medicine_photo(medicine_id, photo_path):
+    db = get_db()
+    db.execute("UPDATE medicines SET photo_path = ? WHERE id = ?", (photo_path, medicine_id))
+    db.commit()
 
 
 def list_medicines():
@@ -122,11 +129,14 @@ def add_medicine_view():
                 for n, q, p in zip(unit_names, unit_qtys, unit_prices)
                 if n.strip()
             ]
+            photo_token = request.form.get("photo_token")
+            photo_path = get_token_photo(photo_token) if photo_token else None
             add_medicine(
                 request.form["name"],
                 request.form["category"],
                 int(request.form["low_stock_threshold"]),
                 units,
+                photo_path=photo_path,
             )
             return redirect(url_for("inventory.list_medicines_view"))
         except ValueError as e:

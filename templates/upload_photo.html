@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload Medicine Photo</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main>
+    {% if done %}
+    <h1>Photo uploaded!</h1>
+    <p>You can close this page now.</p>
+    {% else %}
+    <h1>Upload Medicine Photo</h1>
+    <form method="post" enctype="multipart/form-data">
+      <input type="file" name="photo" accept="image/*" capture="environment" required>
+      <button type="submit">Upload</button>
+    </form>
+    {% endif %}
+  </main>
+</body>
+</html>

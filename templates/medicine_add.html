@@ -6,6 +6,11 @@
   <label>Name <input type="text" name="name" required></label>
   <label>Category <input type="text" name="category"></label>
   <label>Low stock threshold <input type="number" name="low_stock_threshold" value="10" required></label>
+  <label>Photo (optional)
+    <input type="hidden" name="photo_token" id="photo_token">
+    <button type="button" id="request-photo-btn">Add Photo from Phone</button>
+    <span id="photo-status"></span>
+  </label>
 
   <h2>Packaging Units</h2>
   <p>Add one row per packaging level. Exactly one row must have quantity 1 (the smallest sellable unit).</p>
@@ -26,6 +31,26 @@ document.getElementById("add-unit-row").addEventListener("click", function () {
   var row = container.firstElementChild.cloneNode(true);
   row.querySelectorAll("input").forEach(function (input) { input.value = ""; });
   container.appendChild(row);
+});
+document.getElementById("request-photo-btn").addEventListener("click", function () {
+  fetch("/photos/new-token", { method: "POST" })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById("photo_token").value = data.token;
+      var status = document.getElementById("photo-status");
+      status.innerHTML = '<img src="' + data.qr_url + '" alt="Scan with phone" width="150">' +
+        '<br>Waiting for photo...';
+      var poll = setInterval(function () {
+        fetch("/photos/status/" + data.token)
+          .then(function (r) { return r.json(); })
+          .then(function (s) {
+            if (s.uploaded) {
+              clearInterval(poll);
+              status.innerHTML = "Photo received!";
+            }
+          });
+      }, 3000);
+    });
 });
 </script>
 {% endblock %}

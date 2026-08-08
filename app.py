@@ -6,6 +6,7 @@ import auth
 import dashboard
 import db as db_module
 import inventory
+import photos
 import sales
 import users
 
@@ -30,6 +31,7 @@ def create_app(test_config=None):
     app.register_blueprint(auth.bp)
     app.register_blueprint(dashboard.bp)
     app.register_blueprint(inventory.bp)
+    app.register_blueprint(photos.bp)
     app.register_blueprint(sales.bp)
     app.register_blueprint(users.bp)
     app.cli.add_command(auth.init_admin_command)
