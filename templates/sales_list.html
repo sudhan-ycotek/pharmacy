@@ -1,19 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Sales History{% endblock %}
+{% block page_title %}Sales History{% endblock %}
+{% block page_desc %}Browse past sales; admins can void one to restore its stock.{% endblock %}
 {% block content %}
-<h1>Sales History</h1>
-<table>
-  <tr><th>Date/Time</th><th>Total</th><th>Status</th><th></th></tr>
-  {% for s in sales %}
-  <tr>
-    <td>{{ s['timestamp'] }}</td>
-    <td>{{ "%.2f"|format(s['total']) }}</td>
-    <td>{{ "Voided" if s['voided'] else "Completed" }}</td>
-    <td><a href="{{ url_for('sales.receipt', sale_id=s['id']) }}">Receipt</a></td>
-  </tr>
-  {% endfor %}
-</table>
-{% if not sales %}
-<p>No sales recorded yet.</p>
-{% endif %}
+<div class="card panel">
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Date/Time</th><th>Sold By</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for s in sales %}
+      <tr>
+        <td>{{ s['timestamp'] }}</td>
+        <td>{{ s['username'] }}</td>
+        <td class="num">Rs {{ "%.2f"|format(s['total']) }}</td>
+        <td>{% if s['voided'] %}<span class="badge critical">Voided</span>{% else %}<span class="badge good">Completed</span>{% endif %}</td>
+        <td><a href="{{ url_for('sales.receipt', sale_id=s['id']) }}" class="btn btn-secondary btn-icon">Receipt</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not sales %}
+  <p class="panel-desc">No sales recorded yet.</p>
+  {% endif %}
+</div>
 {% endblock %}

@@ -1,25 +1,47 @@
 {% extends "base.html" %}
-{% block title %}Receipt #{{ sale['id'] }}{% endblock %}
+{% block page_title %}Receipt #{{ sale['id'] }}{% endblock %}
+{% block page_desc %}{% if sale['voided'] %}This sale has been voided.{% else %}Printable record of this sale.{% endif %}{% endblock %}
 {% block content %}
-<h1>Receipt #{{ sale['id'] }}{% if sale['voided'] %} (VOIDED){% endif %}</h1>
-<p>Date: {{ sale['timestamp'] }}</p>
-<table>
-  <tr><th>Medicine</th><th>Unit</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr>
-  {% for item in items %}
-  <tr>
-    <td>{{ item['medicine_name'] }}</td>
-    <td>{{ item['unit_name'] }}</td>
-    <td>{{ item['quantity'] }}</td>
-    <td>{{ "%.2f"|format(item['unit_price']) }}</td>
-    <td>{{ "%.2f"|format(item['subtotal']) }}</td>
-  </tr>
-  {% endfor %}
-</table>
-<p><strong>Total: {{ "%.2f"|format(sale['total']) }}</strong></p>
-<button class="no-print" onclick="window.print()">Print</button>
+<div class="card panel" style="max-width:520px">
+  {% if sale['voided'] %}<span class="badge critical">Voided</span>{% endif %}
+  <p class="panel-desc">Date: {{ sale['timestamp'] }} · Sold by: {{ sale['username'] }}</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item['medicine_name'] }}</td>
+        <td>{{ item['unit_name'] }}</td>
+        <td class="num">{{ item['quantity'] }}</td>
+        <td class="num">{{ "%.2f"|format(item['unit_price']) }}</td>
+        <td class="num">{{ "%.2f"|format(item['subtotal']) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="bill-total-row">Total: Rs {{ "%.2f"|format(sale['total']) }}</div>
+  <div class="no-print" style="display:flex; gap:10px; margin-top:16px;">
+    <button class="btn btn-secondary" onclick="window.print()">Print</button>
+    {% if session.get('role') == 'admin' and not sale['voided'] %}
+    <button type="button" class="btn btn-danger" onclick="openModal('void-modal')">Void Sale</button>
+    {% endif %}
+  </div>
+</div>
+
 {% if session.get('role') == 'admin' and not sale['voided'] %}
-<form method="post" action="{{ url_for('sales.void', sale_id=sale['id']) }}" class="no-print">
-  <button type="submit">Void Sale</button>
-</form>
+<div class="modal-backdrop" id="void-modal">
+  <div class="modal">
+    <h3>Void this sale?</h3>
+    <p>Stock will be restored for every item on this receipt. This cannot be undone.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('void-modal')">Cancel</button>
+      <form method="post" action="{{ url_for('sales.void', sale_id=sale['id']) }}">
+        <button type="submit" class="btn btn-danger">Void Sale</button>
+      </form>
+    </div>
+  </div>
+</div>
 {% endif %}
 {% endblock %}

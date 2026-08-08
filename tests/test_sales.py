@@ -245,3 +245,23 @@ def test_sales_search_excludes_box_unit(admin_client, app):
     assert unit_names == {"File", "Tablet"}
     assert "photo_path" in data[0]
     assert "packaging_type" in data[0]
+
+
+def test_get_sale_includes_seller_username(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("cashier1", "pw", "staff")
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}])
+        sale = get_sale(result["sale_id"])
+        assert sale["sale"]["username"] == "cashier1"
+
+
+def test_list_sales_includes_seller_username(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("cashier1", "pw", "staff")
+        create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        sales = list_sales()
+        assert sales[0]["username"] == "cashier1"

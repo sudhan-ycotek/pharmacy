@@ -112,7 +112,10 @@ def today_sales_total():
 
 def get_sale(sale_id):
     db = get_db()
-    sale = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    sale = db.execute(
+        "SELECT s.*, u.username FROM sales s JOIN users u ON u.id = s.user_id WHERE s.id = ?",
+        (sale_id,),
+    ).fetchone()
     if sale is None:
         return None
     items = db.execute(
@@ -127,10 +130,12 @@ def list_sales(user_id=None):
     db = get_db()
     if user_id is None:
         return db.execute(
-            "SELECT * FROM sales ORDER BY id DESC LIMIT 50"
+            "SELECT s.*, u.username FROM sales s JOIN users u ON u.id = s.user_id "
+            "ORDER BY s.id DESC LIMIT 50"
         ).fetchall()
     return db.execute(
-        "SELECT * FROM sales WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+        "SELECT s.*, u.username FROM sales s JOIN users u ON u.id = s.user_id "
+        "WHERE s.user_id = ? ORDER BY s.id DESC LIMIT 50",
         (user_id,),
     ).fetchall()
 
