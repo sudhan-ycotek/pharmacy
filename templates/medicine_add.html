@@ -26,6 +26,8 @@
   <button type="submit">Save Medicine</button>
 </form>
 <script>
+var photoPollInterval = null;
+
 document.getElementById("add-unit-row").addEventListener("click", function () {
   var container = document.getElementById("units");
   var row = container.firstElementChild.cloneNode(true);
@@ -33,6 +35,9 @@ document.getElementById("add-unit-row").addEventListener("click", function () {
   container.appendChild(row);
 });
 document.getElementById("request-photo-btn").addEventListener("click", function () {
+  if (photoPollInterval) {
+    clearInterval(photoPollInterval);
+  }
   fetch("/photos/new-token", { method: "POST" })
     .then(function (r) { return r.json(); })
     .then(function (data) {
@@ -40,12 +45,13 @@ document.getElementById("request-photo-btn").addEventListener("click", function 
       var status = document.getElementById("photo-status");
       status.innerHTML = '<img src="' + data.qr_url + '" alt="Scan with phone" width="150">' +
         '<br>Waiting for photo...';
-      var poll = setInterval(function () {
+      photoPollInterval = setInterval(function () {
         fetch("/photos/status/" + data.token)
           .then(function (r) { return r.json(); })
           .then(function (s) {
             if (s.uploaded) {
-              clearInterval(poll);
+              clearInterval(photoPollInterval);
+              photoPollInterval = null;
               status.innerHTML = "Photo received!";
             }
           });

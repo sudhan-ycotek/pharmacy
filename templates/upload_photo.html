@@ -13,6 +13,9 @@
     <p>You can close this page now.</p>
     {% else %}
     <h1>Upload Medicine Photo</h1>
+    {% if error %}
+    <p style="color: red;"><strong>Error:</strong> {{ error }}</p>
+    {% endif %}
     <form method="post" enctype="multipart/form-data">
       <input type="file" name="photo" accept="image/*" capture="environment" required>
       <button type="submit">Upload</button>

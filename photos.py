@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import qrcode
 from flask import Blueprint, Response, current_app, jsonify, render_template, request
 
+from auth import role_required
 from db import get_db
 
 bp = Blueprint("photos", __name__, url_prefix="/photos")
@@ -46,6 +47,10 @@ def save_photo(token, file_storage):
         raise ValueError(f"invalid or expired token '{token}'")
 
     ext = os.path.splitext(file_storage.filename or "")[1].lower() or ".jpg"
+    allowed_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    if ext not in allowed_exts:
+        raise ValueError(f"unsupported file type '{ext}' — allowed types: {', '.join(sorted(allowed_exts))}")
+
     filename = f"{token}{ext}"
     photos_dir = os.path.join(current_app.root_path, "static", "photos")
     os.makedirs(photos_dir, exist_ok=True)
@@ -74,6 +79,7 @@ def get_lan_ip():
 
 
 @bp.route("/new-token", methods=["POST"])
+@role_required("admin")
 def new_token():
     token_data = create_photo_token()
     lan_ip = get_lan_ip()
@@ -86,12 +92,14 @@ def new_token():
 
 
 @bp.route("/qr/<token>.png")
+@role_required("admin")
 def qr_image(token):
     lan_ip = get_lan_ip()
     upload_url = f"http://{lan_ip}:{PORT}/photos/upload/{token}"
     img = qrcode.make(upload_url)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
+    buf.seek(0)
     return Response(buf.getvalue(), mimetype="image/png")
 
 
@@ -100,9 +108,12 @@ def upload(token):
     if request.method == "POST":
         if not is_token_valid(token):
             return "This link has expired. Ask for a new QR code.", 400
-        file_storage = request.files["photo"]
-        save_photo(token, file_storage)
-        return render_template("upload_photo.html", token=token, done=True)
+        try:
+            file_storage = request.files["photo"]
+            save_photo(token, file_storage)
+            return render_template("upload_photo.html", token=token, done=True)
+        except ValueError as e:
+            return render_template("upload_photo.html", token=token, done=False, error=str(e))
     return render_template("upload_photo.html", token=token, done=False)
 
 
