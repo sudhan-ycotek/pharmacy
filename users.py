@@ -1,4 +1,6 @@
-from flask import Blueprint, redirect, render_template, request, url_for
+import sqlite3
+
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from auth import create_user, role_required
 from db import get_db
@@ -18,8 +20,11 @@ def delete_staff(user_id):
         raise ValueError(f"user {user_id} not found")
     if user["role"] != "staff":
         raise ValueError("only staff accounts can be deleted here")
-    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    db.commit()
+    try:
+        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        db.commit()
+    except sqlite3.IntegrityError:
+        raise ValueError(f"cannot delete '{user['username']}' — they have recorded sales; consider keeping the account instead")
 
 
 @bp.route("")
@@ -31,12 +36,23 @@ def list_users():
 @bp.route("/add", methods=["POST"])
 @role_required("admin")
 def add_user():
-    create_user(request.form["username"], request.form["password"], "staff")
+    try:
+        username = request.form["username"]
+        password = request.form["password"]
+        create_user(username, password, "staff")
+        return redirect(url_for("users.list_users"))
+    except sqlite3.IntegrityError:
+        flash(f"username '{request.form.get('username', '')}' is already taken")
+    except (KeyError, ValueError) as e:
+        flash(str(e))
     return redirect(url_for("users.list_users"))
 
 
 @bp.route("/<int:user_id>/delete", methods=["POST"])
 @role_required("admin")
 def delete_user(user_id):
-    delete_staff(user_id)
+    try:
+        delete_staff(user_id)
+    except ValueError as e:
+        flash(str(e))
     return redirect(url_for("users.list_users"))

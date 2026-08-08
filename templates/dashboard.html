@@ -2,7 +2,7 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
-<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a> | <a href="{{ url_for('sales.new_sale') }}">New Sale</a></p>
+<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a> | <a href="{{ url_for('sales.new_sale') }}">New Sale</a>{% if session.get('role') == 'admin' %} | <a href="{{ url_for('users.list_users') }}">Staff Accounts</a>{% endif %}</p>
 
 <h2>Today's Sales Total</h2>
 <p>{{ "%.2f"|format(todays_total) }}</p>
