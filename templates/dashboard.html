@@ -2,7 +2,10 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <h1>Dashboard</h1>
-<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a></p>
+<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a> | <a href="{{ url_for('sales.new_sale') }}">New Sale</a></p>
+
+<h2>Today's Sales Total</h2>
+<p>{{ "%.2f"|format(todays_total) }}</p>
 
 <h2>Low Stock Medicines</h2>
 {% if low_stock %}
