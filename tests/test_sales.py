@@ -1,7 +1,7 @@
 import pytest
 
 from inventory import add_medicine, get_medicine
-from sales import create_sale, get_sale, today_sales_total, void_sale
+from sales import create_sale, get_sale, list_sales, today_sales_total, void_sale
 
 TABLET_UNITS = [
     {"unit_name": "Box", "qty_in_base_units": 240, "price": 480.0},
@@ -160,3 +160,81 @@ def test_finalize_route_rejects_non_numeric_quantity(admin_client, app):
     assert response.status_code == 400
     data = response.get_json()
     assert "error" in data
+
+
+def test_create_sale_rejects_fractional_quantity(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        with pytest.raises(ValueError):
+            create_sale(user_id, [
+                {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2.5},
+            ])
+        medicine = get_medicine(medicine_id)
+        # Verify stock unchanged (no partial mutation on rejected sale)
+        assert medicine["stock_in_base_units"] == 5 * 240
+
+
+def test_create_sale_rejects_bool_quantity(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        with pytest.raises(ValueError):
+            create_sale(user_id, [
+                {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": True},
+            ])
+
+
+def test_finalize_route_rejects_fractional_quantity(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={"items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2.5}]},
+    )
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "error" in data
+
+
+def test_list_sales_route_admin_sees_all_staff_sees_own(app, client):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        admin_id = create_user("boss", "bosspass", "admin")
+        staff_id = create_user("clerk", "clerkpass", "staff")
+        create_sale(admin_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        create_sale(staff_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}])
+
+    admin_client = client
+    admin_client.post("/login", data={"username": "boss", "password": "bosspass"})
+    admin_resp = admin_client.get("/sales")
+    assert admin_resp.status_code == 200
+    admin_body = admin_resp.get_data(as_text=True)
+    assert admin_body.count("/receipt") == 2
+    admin_client.post("/logout")
+
+    staff_client = client
+    staff_client.post("/login", data={"username": "clerk", "password": "clerkpass"})
+    staff_resp = staff_client.get("/sales")
+    assert staff_resp.status_code == 200
+    staff_body = staff_resp.get_data(as_text=True)
+    assert staff_body.count("/receipt") == 1
+
+
+def test_list_sales_business_logic_filters_by_user(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_a = create_user("alice", "pw", "staff")
+        user_b = create_user("bob", "pw", "staff")
+        create_sale(user_a, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        create_sale(user_b, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+
+        all_sales = list_sales()
+        assert len(all_sales) == 2
+
+        a_sales = list_sales(user_id=user_a)
+        assert len(a_sales) == 1
+        assert a_sales[0]["user_id"] == user_a

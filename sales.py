@@ -25,11 +25,10 @@ def create_sale(user_id, items):
         except (KeyError, TypeError) as e:
             raise ValueError(f"invalid item structure: {e}")
 
-        try:
-            if quantity <= 0:
-                raise ValueError("quantity must be positive")
-        except TypeError:
-            raise ValueError("quantity must be a positive number")
+        if isinstance(quantity, bool) or not isinstance(quantity, int):
+            raise ValueError("quantity must be a whole number")
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
 
         unit_row = db.execute(
             "SELECT qty_in_base_units, price FROM medicine_units "
@@ -61,7 +60,7 @@ def create_sale(user_id, items):
 
     total = round(total, 2)
     cur = db.execute(
-        "INSERT INTO sales (user_id, timestamp, total, voided) VALUES (?, datetime('now'), ?, 0)",
+        "INSERT INTO sales (user_id, timestamp, total, voided) VALUES (?, datetime('now', 'localtime'), ?, 0)",
         (user_id, total),
     )
     sale_id = cur.lastrowid
@@ -106,7 +105,7 @@ def today_sales_total():
     db = get_db()
     row = db.execute(
         "SELECT COALESCE(SUM(total), 0) AS total FROM sales "
-        "WHERE voided = 0 AND date(timestamp) = date('now')"
+        "WHERE voided = 0 AND date(timestamp) = date('now', 'localtime')"
     ).fetchone()
     return row["total"]
 
@@ -124,10 +123,33 @@ def get_sale(sale_id):
     return {"sale": sale, "items": items}
 
 
+def list_sales(user_id=None):
+    db = get_db()
+    if user_id is None:
+        return db.execute(
+            "SELECT * FROM sales ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+    return db.execute(
+        "SELECT * FROM sales WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+        (user_id,),
+    ).fetchall()
+
+
 @bp.route("/new")
 @login_required
 def new_sale():
     return render_template("new_sale.html")
+
+
+@bp.route("")
+@login_required
+def list_sales_view():
+    user = current_user()
+    if user["role"] == "admin":
+        sales = list_sales()
+    else:
+        sales = list_sales(user_id=user["id"])
+    return render_template("sales_list.html", sales=sales)
 
 
 @bp.route("/search")

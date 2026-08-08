@@ -11,6 +11,11 @@ def add_medicine(name, category, low_stock_threshold, units, photo_path=None):
     if not units:
         raise ValueError("medicine must have at least one unit")
 
+    unit_names = [u["unit_name"] for u in units]
+    duplicates = {n for n in unit_names if unit_names.count(n) > 1}
+    if duplicates:
+        raise ValueError(f"duplicate unit name(s) not allowed: {', '.join(sorted(duplicates))}")
+
     # Validate all units have positive qty_in_base_units and non-negative prices
     for u in units:
         if not isinstance(u["qty_in_base_units"], int) or u["qty_in_base_units"] < 1:
@@ -72,6 +77,8 @@ def search_medicines(query):
 
 
 def add_stock(medicine_id, unit_name, quantity):
+    if isinstance(quantity, bool) or not isinstance(quantity, int):
+        raise ValueError("quantity must be a whole number")
     if quantity <= 0:
         raise ValueError("quantity must be positive")
     db = get_db()
@@ -113,7 +120,11 @@ def unit_price_breakdown(medicine_id):
 @bp.route("/")
 @role_required("admin", "staff")
 def list_medicines_view():
-    return render_template("medicines.html", medicines=list_medicines())
+    medicines = list_medicines()
+    price_breakdowns = {m["id"]: unit_price_breakdown(m["id"]) for m in medicines}
+    return render_template(
+        "medicines.html", medicines=medicines, price_breakdowns=price_breakdowns
+    )
 
 
 @bp.route("/add", methods=["GET", "POST"])

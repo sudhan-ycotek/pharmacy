@@ -58,6 +58,29 @@ def test_add_stock_unknown_unit_raises(app):
             add_stock(medicine_id, "Pallet", 1)
 
 
+def test_add_stock_rejects_fractional_quantity(app):
+    with app.app_context():
+        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        with pytest.raises(ValueError):
+            add_stock(medicine_id, "Box", 2.5)
+
+
+def test_add_stock_rejects_bool_quantity(app):
+    with app.app_context():
+        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        with pytest.raises(ValueError):
+            add_stock(medicine_id, "Box", True)
+
+
+def test_add_medicine_rejects_duplicate_unit_names(app):
+    with app.app_context():
+        with pytest.raises(ValueError, match="duplicate unit name"):
+            add_medicine("Bad Medicine", "Tablet", 10, [
+                {"unit_name": "Tablet", "qty_in_base_units": 1, "price": 2.5},
+                {"unit_name": "Tablet", "qty_in_base_units": 10, "price": 20.0},
+            ])
+
+
 def test_low_stock_medicines_flags_below_threshold(app):
     with app.app_context():
         medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
@@ -156,3 +179,18 @@ def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_u
     })
     # Should re-render form (200) not error (500)
     assert resp.status_code == 200
+
+
+def test_list_medicines_view_shows_price_breakdown_and_photo(app, client, admin_user):
+    """Medicines list renders unit price breakdowns and, when present, a photo."""
+    with app.app_context():
+        add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        photo_medicine_id = add_medicine(
+            "Cough Syrup", "Liquid", 5, LIQUID_UNITS, photo_path="photos/example.jpg"
+        )
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "2.50" in body  # Tablet unit price
+    assert "photos/example.jpg" in body

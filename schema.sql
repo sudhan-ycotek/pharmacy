@@ -19,7 +19,8 @@ CREATE TABLE medicine_units (
     medicine_id INTEGER NOT NULL REFERENCES medicines(id),
     unit_name TEXT NOT NULL,
     qty_in_base_units INTEGER NOT NULL,
-    price REAL NOT NULL
+    price REAL NOT NULL,
+    UNIQUE(medicine_id, unit_name)
 );
 
 CREATE TABLE sales (
