@@ -42,6 +42,22 @@ def change_own_password(user_id, current_password, new_password):
     db.commit()
 
 
+def reset_admin_password(username, new_password):
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if user is None:
+        raise ValueError(f"user '{username}' not found")
+    if user["role"] != "admin":
+        raise ValueError("only admin account passwords can be reset here")
+    if not new_password:
+        raise ValueError("new password cannot be empty")
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (generate_password_hash(new_password), user["id"]),
+    )
+    db.commit()
+
+
 def current_user():
     user_id = session.get("user_id")
     if user_id is None:
@@ -120,3 +136,16 @@ def change_password():
 def init_admin_command(username, password):
     create_user(username, password, "admin")
     click.echo(f"Admin user '{username}' created.")
+
+
+@click.command("reset-admin-password")
+@click.argument("username")
+@click.argument("new_password")
+@with_appcontext
+def reset_admin_password_command(username, new_password):
+    try:
+        reset_admin_password(username, new_password)
+        click.echo(f"Password reset for admin '{username}'.")
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)

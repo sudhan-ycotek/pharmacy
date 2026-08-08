@@ -2,7 +2,7 @@
 {% block page_title %}Add Medicine{% endblock %}
 {% block page_desc %}Add a new medicine to the catalog and set its packaging and pricing.{% endblock %}
 {% block content %}
-<div class="card panel" style="max-width:520px">
+<div class="card panel" style="max-width:520px; margin:0 auto">
   <form method="post" class="styled-form" id="add-medicine-form">
     <div class="field">
       <label>Name</label>
@@ -60,7 +60,7 @@
       <label>Photo (optional)</label>
       <input type="hidden" name="photo_token" id="photo_token">
       <button type="button" id="request-photo-btn" class="btn btn-secondary">Add Photo from Phone</button>
-      <span id="photo-status"></span>
+      <div id="photo-status"></div>
     </div>
 
     <button type="submit" class="btn btn-primary">Save Medicine</button>
@@ -73,10 +73,15 @@ var packagingSelect = document.getElementById("packaging-type");
 var boxFileFields = document.getElementById("box-file-fields");
 var bottledFields = document.getElementById("bottled-fields");
 
+var boxFileRequiredInputs = boxFileFields.querySelectorAll("input[required]");
+var bottledRequiredInputs = bottledFields.querySelectorAll("input[required]");
+
 function toggleFields() {
   var isBoxFile = packagingSelect.value === "box_file";
   boxFileFields.style.display = isBoxFile ? "" : "none";
   bottledFields.style.display = isBoxFile ? "none" : "";
+  boxFileRequiredInputs.forEach(function (input) { input.required = isBoxFile; });
+  bottledRequiredInputs.forEach(function (input) { input.required = !isBoxFile; });
 }
 packagingSelect.addEventListener("change", toggleFields);
 toggleFields();
@@ -107,7 +112,8 @@ document.getElementById("request-photo-btn").addEventListener("click", function 
     .then(function (data) {
       document.getElementById("photo_token").value = data.token;
       var status = document.getElementById("photo-status");
-      status.innerHTML = '<img src="' + data.qr_url + '" alt="Scan with phone" width="120">' + '<br>Waiting for photo...';
+      status.innerHTML = '<div class="photo-preview"><img src="' + data.qr_url + '" alt="Scan with phone" width="220">' +
+        '<p class="field-hint">Waiting for photo...</p></div>';
       photoPollInterval = setInterval(function () {
         fetch("/photos/status/" + data.token)
           .then(function (r) { return r.json(); })
@@ -115,7 +121,7 @@ document.getElementById("request-photo-btn").addEventListener("click", function 
             if (s.uploaded) {
               clearInterval(photoPollInterval);
               photoPollInterval = null;
-              status.textContent = "Photo received!";
+              status.innerHTML = '<p class="photo-preview field-hint">Photo received!</p>';
             }
           });
       }, 3000);

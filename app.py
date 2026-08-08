@@ -1,5 +1,8 @@
 import os
 import secrets
+import shutil
+import sys
+import time
 
 from flask import Flask
 
@@ -11,8 +14,25 @@ import photos
 import sales
 import users
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SECRET_KEY_PATH = os.path.join(BASE_DIR, "secret_key.txt")
+if getattr(sys, "frozen", False):
+    # Running as a PyInstaller-built exe: bundled resources (templates, schema.sql,
+    # the original static/ files) live in a temp extraction dir that vanishes when
+    # the exe closes. Writable data (the DB, the secret key, uploaded photos) must
+    # live next to the exe itself so it survives between runs.
+    BUNDLE_DIR = sys._MEIPASS
+    DATA_DIR = os.path.dirname(sys.executable)
+else:
+    BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = BUNDLE_DIR
+
+TEMPLATE_DIR = os.path.join(BUNDLE_DIR, "templates")
+STATIC_DIR = os.path.join(DATA_DIR, "static")
+SECRET_KEY_PATH = os.path.join(DATA_DIR, "secret_key.txt")
+
+
+def _ensure_static_dir():
+    if not os.path.exists(STATIC_DIR):
+        shutil.copytree(os.path.join(BUNDLE_DIR, "static"), STATIC_DIR)
 
 
 def _load_or_create_secret_key():
@@ -33,10 +53,11 @@ def _load_or_create_secret_key():
 
 
 def create_app(test_config=None):
-    app = Flask(__name__, root_path=BASE_DIR)
+    _ensure_static_dir()
+    app = Flask(__name__, root_path=BUNDLE_DIR, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
     app.config.from_mapping(
         SECRET_KEY="dev-change-me" if test_config and test_config.get("TESTING") else _load_or_create_secret_key(),
-        DATABASE=os.path.join(BASE_DIR, "pharmacy.db"),
+        DATABASE=os.path.join(DATA_DIR, "pharmacy.db"),
     )
     if test_config:
         app.config.update(test_config)
@@ -45,7 +66,7 @@ def create_app(test_config=None):
 
     with app.app_context():
         if not os.path.exists(app.config["DATABASE"]):
-            db_module.init_db(os.path.join(BASE_DIR, "schema.sql"))
+            db_module.init_db(os.path.join(BUNDLE_DIR, "schema.sql"))
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(dashboard.bp)
@@ -54,10 +75,38 @@ def create_app(test_config=None):
     app.register_blueprint(sales.bp)
     app.register_blueprint(users.bp)
     app.cli.add_command(auth.init_admin_command)
+    app.cli.add_command(auth.reset_admin_password_command)
 
     return app
 
 
 if __name__ == "__main__":
-    app = create_app()
-    app.run(host="0.0.0.0", port=5000)
+    if len(sys.argv) > 1:
+        # A packaged exe has no `flask` command available — dispatch CLI
+        # subcommands (init-admin, reset-admin-password) directly instead.
+        # The commands are decorated with @with_appcontext, which otherwise
+        # tries to rediscover an app via Flask's own CLI machinery; pushing
+        # a context up front short-circuits that and reuses this instance.
+        app = create_app()
+        with app.app_context():
+            app.cli.main(args=sys.argv[1:], prog_name=os.path.basename(sys.argv[0]))
+    else:
+        if getattr(sys, "frozen", False):
+            # A windowed (--noconsole) PyInstaller build has no real stdout/stderr —
+            # Werkzeug's startup banner would crash trying to write to None.
+            if sys.stdout is None:
+                sys.stdout = open(os.devnull, "w")
+            if sys.stderr is None:
+                sys.stderr = open(os.devnull, "w")
+
+            import threading
+            import webbrowser
+
+            def _open_browser():
+                time.sleep(1.5)
+                webbrowser.open("http://localhost:5000")
+
+            threading.Thread(target=_open_browser, daemon=True).start()
+
+        app = create_app()
+        app.run(host="0.0.0.0", port=5000)

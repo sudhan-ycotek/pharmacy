@@ -7,6 +7,7 @@ from inventory import (
     get_medicine_units,
     list_medicines,
     low_stock_medicines,
+    remove_stock,
     search_medicines,
     sellable_units,
     set_medicine_photo,
@@ -88,6 +89,37 @@ def test_add_stock_rejects_fractional_quantity(app):
         medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
             add_stock(medicine_id, "Box", 2.5)
+
+
+def test_remove_stock_converts_to_base_units(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 5)
+        new_total = remove_stock(medicine_id, "Box", 2)
+        assert new_total == 3 * 240
+
+
+def test_remove_stock_rejects_more_than_available(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 1)
+        with pytest.raises(ValueError):
+            remove_stock(medicine_id, "Box", 2)
+
+
+def test_remove_stock_unknown_unit_raises(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        with pytest.raises(ValueError):
+            remove_stock(medicine_id, "Pallet", 1)
+
+
+def test_remove_stock_rejects_fractional_quantity(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 5)
+        with pytest.raises(ValueError):
+            remove_stock(medicine_id, "Box", 2.5)
 
 
 def test_low_stock_medicines_flags_below_threshold(app):
@@ -200,3 +232,45 @@ def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_u
     })
     # Should re-render form (200) not error (500)
     assert resp.status_code == 200
+
+
+def test_add_stock_view_shows_current_stock(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 3)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get(f"/medicines/{medicine_id}/add-stock")
+    assert resp.status_code == 200
+    assert b'"num">720</strong>' in resp.data
+
+
+def test_add_stock_view_post_remove_action_reduces_stock(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 5)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
+        "action": "remove",
+        "unit_name": "Box",
+        "quantity": "2",
+    })
+    assert resp.status_code == 302
+    with app.app_context():
+        from inventory import get_medicine
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 3 * 240
+
+
+def test_add_stock_view_post_remove_more_than_available_flashes_error(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        add_stock(medicine_id, "Box", 1)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
+        "action": "remove",
+        "unit_name": "Box",
+        "quantity": "2",
+    })
+    assert resp.status_code == 200
+    with app.app_context():
+        from inventory import get_medicine
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 240

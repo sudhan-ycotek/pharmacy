@@ -38,7 +38,7 @@
         </td>
         <td>
           {% if session.get('role') == 'admin' %}
-          <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}" class="btn btn-secondary btn-icon">Add Stock</a>
+          <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}" class="btn btn-secondary btn-icon">Manage Stock</a>
           {% endif %}
         </td>
       </tr>

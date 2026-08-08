@@ -127,6 +127,34 @@ def add_stock(medicine_id, unit_name, quantity):
     ).fetchone()["stock_in_base_units"]
 
 
+def remove_stock(medicine_id, unit_name, quantity):
+    if isinstance(quantity, bool) or not isinstance(quantity, int):
+        raise ValueError("quantity must be a whole number")
+    if quantity <= 0:
+        raise ValueError("quantity must be positive")
+    db = get_db()
+    unit_row = db.execute(
+        "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
+        (medicine_id, unit_name),
+    ).fetchone()
+    if unit_row is None:
+        raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
+    medicine_row = db.execute(
+        "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
+    ).fetchone()
+    base_units_removed = unit_row["qty_in_base_units"] * quantity
+    if medicine_row["stock_in_base_units"] < base_units_removed:
+        raise ValueError("cannot remove more stock than is currently in inventory")
+    db.execute(
+        "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
+        (base_units_removed, medicine_id),
+    )
+    db.commit()
+    return db.execute(
+        "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
+    ).fetchone()["stock_in_base_units"]
+
+
 def low_stock_medicines():
     db = get_db()
     return db.execute(
@@ -208,11 +236,16 @@ def add_stock_view(medicine_id):
     medicine = get_medicine(medicine_id)
     if request.method == "POST":
         try:
-            add_stock(medicine_id, request.form["unit_name"], int(request.form["quantity"]))
+            unit_name = request.form["unit_name"]
+            quantity = int(request.form["quantity"])
+            if request.form.get("action") == "remove":
+                remove_stock(medicine_id, unit_name, quantity)
+            else:
+                add_stock(medicine_id, unit_name, quantity)
             return redirect(url_for("inventory.list_medicines_view"))
         except ValueError as e:
             flash(str(e))
-        except (KeyError, TypeError) as e:
+        except (KeyError, TypeError):
             flash("Invalid form input")
     return render_template(
         "add_stock.html", medicine=medicine, units=get_medicine_units(medicine_id)

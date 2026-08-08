@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Pharmacy{% endblock %} — Shreekunj Pharmacy</title>
+  <title>{% block title %}Pharmacy{% endblock %} — Pharmacy Name</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% if session.get('user_id') %}
   <div class="app">
     <aside class="sidebar">
-      <div class="brand"><span class="mark">P</span> Shreekunj Pharmacy</div>
+      <div class="brand"><span class="mark">P</span> Pharmacy Name</div>
       <div class="nav-label">Menu</div>
       <a class="nav-item {{ 'active' if request.endpoint == 'dashboard.home' }}" href="{{ url_for('dashboard.home') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>

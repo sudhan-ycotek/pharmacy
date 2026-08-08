@@ -52,7 +52,7 @@ def save_photo(token, file_storage):
         raise ValueError(f"unsupported file type '{ext}' — allowed types: {', '.join(sorted(allowed_exts))}")
 
     filename = f"{token}{ext}"
-    photos_dir = os.path.join(current_app.root_path, "static", "photos")
+    photos_dir = os.path.join(current_app.static_folder, "photos")
     os.makedirs(photos_dir, exist_ok=True)
     filepath = os.path.join(photos_dir, filename)
     file_storage.save(filepath)
