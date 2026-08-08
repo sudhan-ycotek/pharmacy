@@ -1,25 +1,72 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_desc %}Overview of today's sales and stock that needs attention.{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
-<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a> | <a href="{{ url_for('sales.new_sale') }}">New Sale</a> | <a href="{{ url_for('sales.list_sales_view') }}">Sales History</a>{% if session.get('role') == 'admin' %} | <a href="{{ url_for('users.list_users') }}">Staff Accounts</a>{% endif %}</p>
+<div class="stat-row">
+  <div class="card stat-card">
+    <div class="label">Revenue Today</div>
+    <div class="value">Rs {{ "%.2f"|format(todays_total) }}</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Total Products</div>
+    <div class="value">{{ total_products }}</div>
+  </div>
+  <div class="card stat-card {{ 'alert' if low_stock }}">
+    <div class="label">Low Stock</div>
+    <div class="value">{{ low_stock|length }}</div>
+    <div class="sub">{{ "Need reordering soon" if low_stock else "All good" }}</div>
+  </div>
+</div>
 
-<h2>Today's Sales Total</h2>
-<p>{{ "%.2f"|format(todays_total) }}</p>
+<div class="action-row">
+  <a class="action-card card" href="{{ url_for('sales.new_sale') }}">
+    <div class="icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="14" rx="2"></rect></svg></div>
+    <div class="title">New Sale</div>
+    <div class="desc">Search a medicine and check out a customer</div>
+    <div class="go">Open POS →</div>
+  </a>
+  <a class="action-card card" href="{{ url_for('inventory.list_medicines_view') }}">
+    <div class="icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"></path></svg></div>
+    <div class="title">Products</div>
+    <div class="desc">Add medicines, restock, edit pricing</div>
+    <div class="go">Manage →</div>
+  </a>
+  <a class="action-card card" href="{{ url_for('sales.list_sales_view') }}">
+    <div class="icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path></svg></div>
+    <div class="title">Sales History</div>
+    <div class="desc">Look up a past sale, void if needed</div>
+    <div class="go">View →</div>
+  </a>
+  {% if session.get('role') == 'admin' %}
+  <a class="action-card card" href="{{ url_for('users.list_users') }}">
+    <div class="icon-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg></div>
+    <div class="title">Staff</div>
+    <div class="desc">Add or remove staff login accounts</div>
+    <div class="go">Manage →</div>
+  </a>
+  {% endif %}
+</div>
 
-<h2>Low Stock Medicines</h2>
-{% if low_stock %}
-<table>
-  <tr><th>Name</th><th>Stock (base units)</th><th>Threshold</th></tr>
-  {% for m in low_stock %}
-  <tr class="low-stock">
-    <td>{{ m['name'] }}</td>
-    <td>{{ m['stock_in_base_units'] }}</td>
-    <td>{{ m['low_stock_threshold'] }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<p>No medicines are low on stock.</p>
-{% endif %}
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Medicines running low</h2>
+      <p class="panel-desc">Below their restock threshold.</p>
+    </div>
+  </div>
+  {% if low_stock %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Medicine</th><th class="num">Stock</th><th class="num">Threshold</th></tr></thead>
+      <tbody>
+      {% for m in low_stock %}
+      <tr><td>{{ m['name'] }}</td><td class="num">{{ m['stock_in_base_units'] }}</td><td class="num">{{ m['low_stock_threshold'] }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No medicines are low on stock.</p>
+  {% endif %}
+</div>
 {% endblock %}

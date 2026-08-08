@@ -30,3 +30,14 @@ def test_dashboard_shows_todays_sales_total(admin_client, app):
     response = admin_client.get("/")
     assert response.status_code == 200
     assert b"10.00" in response.data  # 4 tablets * 2.5 price = 10.00
+
+
+def test_dashboard_shows_total_products(admin_client, app):
+    with app.app_context():
+        from helpers import make_box_file_medicine
+        make_box_file_medicine(name="Cetamol")
+        make_box_file_medicine(name="Napa")
+
+    response = admin_client.get("/")
+    assert response.status_code == 200
+    assert b'"value">2</div>' in response.data
