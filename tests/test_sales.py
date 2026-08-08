@@ -233,3 +233,15 @@ def test_list_sales_business_logic_filters_by_user(app):
         a_sales = list_sales(user_id=user_a)
         assert len(a_sales) == 1
         assert a_sales[0]["user_id"] == user_a
+
+
+def test_sales_search_excludes_box_unit(admin_client, app):
+    from helpers import make_box_file_medicine
+    with app.app_context():
+        make_box_file_medicine(name="Cetamol")
+    response = admin_client.get("/sales/search?q=ceta")
+    data = response.get_json()
+    unit_names = {u["unit_name"] for u in data[0]["units"]}
+    assert unit_names == {"File", "Tablet"}
+    assert "photo_path" in data[0]
+    assert "packaging_type" in data[0]

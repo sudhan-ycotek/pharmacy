@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, redirect, render_template, request, url_fo
 
 from auth import current_user, login_required, role_required
 from db import get_db
-from inventory import get_medicine_units, search_medicines
+from inventory import search_medicines, sellable_units
 
 bp = Blueprint("sales", __name__, url_prefix="/sales")
 
@@ -159,10 +159,12 @@ def search():
     medicines = search_medicines(query)
     results = []
     for m in medicines:
-        units = get_medicine_units(m["id"])
+        units = sellable_units(m["id"])
         results.append({
             "id": m["id"],
             "name": m["name"],
+            "packaging_type": m["packaging_type"],
+            "photo_path": m["photo_path"],
             "units": [{"unit_name": u["unit_name"], "price": u["price"]} for u in units],
         })
     return jsonify(results)
