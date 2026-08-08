@@ -63,11 +63,44 @@ function renderResults() {
   currentResults.forEach(function (m, i) {
     var row = document.createElement("div");
     row.className = "search-result" + (i === highlightedIndex ? " highlighted" : "");
-    var thumb = m.photo_path
-      ? '<img src="/static/' + m.photo_path + '" alt="">'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"></rect></svg>';
-    row.innerHTML = '<div class="thumb">' + thumb + '</div><div><div class="med-name">' + m.name +
-      '</div><div class="med-sub">' + (m.packaging_type === "box_file" ? "Box/File" : "Bottled/Other") + '</div></div>';
+
+    // Create thumb element (static)
+    var thumbDiv = document.createElement("div");
+    thumbDiv.className = "thumb";
+    if (m.photo_path) {
+      var img = document.createElement("img");
+      img.src = "/static/" + m.photo_path;
+      img.alt = "";
+      thumbDiv.appendChild(img);
+    } else {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", "3");
+      rect.setAttribute("y", "7");
+      rect.setAttribute("width", "18");
+      rect.setAttribute("height", "13");
+      rect.setAttribute("rx", "2");
+      svg.appendChild(rect);
+      thumbDiv.appendChild(svg);
+    }
+    row.appendChild(thumbDiv);
+
+    // Create info div with safe text content
+    var infoDiv = document.createElement("div");
+    var medNameDiv = document.createElement("div");
+    medNameDiv.className = "med-name";
+    medNameDiv.textContent = m.name;
+    var medSubDiv = document.createElement("div");
+    medSubDiv.className = "med-sub";
+    medSubDiv.textContent = m.packaging_type === "box_file" ? "Box/File" : "Bottled/Other";
+    infoDiv.appendChild(medNameDiv);
+    infoDiv.appendChild(medSubDiv);
+    row.appendChild(infoDiv);
+
     row.addEventListener("click", function () { selectMedicine(i); });
     resultsBox.appendChild(row);
   });
@@ -169,10 +202,27 @@ function renderBill() {
     var subtotal = item.price * item.quantity;
     total += subtotal;
     var row = tbody.insertRow();
-    row.innerHTML = "<td>" + item.name + "</td><td>" + item.unit_name + "</td>" +
-      "<td class=\"num\">" + item.quantity + "</td><td class=\"num\">" + item.price.toFixed(2) + "</td>" +
-      "<td class=\"num\">" + subtotal.toFixed(2) + "</td><td></td>";
-    var removeCell = row.cells[5];
+
+    // Add cells with safe text content for user-controlled fields
+    var nameCell = row.insertCell(0);
+    nameCell.textContent = item.name;
+
+    var unitCell = row.insertCell(1);
+    unitCell.textContent = item.unit_name;
+
+    var qtyCell = row.insertCell(2);
+    qtyCell.className = "num";
+    qtyCell.textContent = item.quantity;
+
+    var priceCell = row.insertCell(3);
+    priceCell.className = "num";
+    priceCell.textContent = item.price.toFixed(2);
+
+    var subtotalCell = row.insertCell(4);
+    subtotalCell.className = "num";
+    subtotalCell.textContent = subtotal.toFixed(2);
+
+    var removeCell = row.insertCell(5);
     var removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-icon";
