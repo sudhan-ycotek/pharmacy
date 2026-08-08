@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Add Stock{% endblock %}
+{% block content %}
+<h1>Add Stock — {{ medicine['name'] }}</h1>
+<form method="post">
+  <label>Unit
+    <select name="unit_name" required>
+      {% for u in units %}
+      <option value="{{ u['unit_name'] }}">{{ u['unit_name'] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Quantity <input type="number" name="quantity" min="1" required></label>
+  <button type="submit">Add Stock</button>
+</form>
+{% endblock %}

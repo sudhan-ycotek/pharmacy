@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Medicines{% endblock %}
+{% block content %}
+<h1>Medicines</h1>
+{% if session.get('role') == 'admin' %}
+<p><a href="{{ url_for('inventory.add_medicine_view') }}">+ Add Medicine</a></p>
+{% endif %}
+<table>
+  <tr><th>Name</th><th>Category</th><th>Stock (base units)</th><th>Threshold</th><th></th></tr>
+  {% for m in medicines %}
+  <tr class="{{ 'low-stock' if m['stock_in_base_units'] < m['low_stock_threshold'] else '' }}">
+    <td>{{ m['name'] }}</td>
+    <td>{{ m['category'] }}</td>
+    <td>{{ m['stock_in_base_units'] }}</td>
+    <td>{{ m['low_stock_threshold'] }}</td>
+    <td>
+      {% if session.get('role') == 'admin' %}
+      <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}">Add Stock</a>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

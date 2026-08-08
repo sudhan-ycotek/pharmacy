@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Add Medicine{% endblock %}
+{% block content %}
+<h1>Add Medicine</h1>
+<form method="post">
+  <label>Name <input type="text" name="name" required></label>
+  <label>Category <input type="text" name="category"></label>
+  <label>Low stock threshold <input type="number" name="low_stock_threshold" value="10" required></label>
+
+  <h2>Packaging Units</h2>
+  <p>Add one row per packaging level. Exactly one row must have quantity 1 (the smallest sellable unit).</p>
+  <div id="units">
+    <div class="unit-row">
+      <input type="text" name="unit_name" placeholder="Unit name (e.g. Box)" required>
+      <input type="number" name="unit_qty" placeholder="Qty in base units" required>
+      <input type="number" step="0.01" name="unit_price" placeholder="Price" required>
+    </div>
+  </div>
+  <button type="button" id="add-unit-row">+ Add another unit</button>
+  <br><br>
+  <button type="submit">Save Medicine</button>
+</form>
+<script>
+document.getElementById("add-unit-row").addEventListener("click", function () {
+  var container = document.getElementById("units");
+  var row = container.firstElementChild.cloneNode(true);
+  row.querySelectorAll("input").forEach(function (input) { input.value = ""; });
+  container.appendChild(row);
+});
+</script>
+{% endblock %}

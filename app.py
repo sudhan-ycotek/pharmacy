@@ -4,6 +4,7 @@ from flask import Flask
 
 import auth
 import db as db_module
+import inventory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,6 +25,7 @@ def create_app(test_config=None):
             db_module.init_db(os.path.join(BASE_DIR, "schema.sql"))
 
     app.register_blueprint(auth.bp)
+    app.register_blueprint(inventory.bp)
     app.cli.add_command(auth.init_admin_command)
 
     return app
