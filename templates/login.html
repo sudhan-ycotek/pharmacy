@@ -1,10 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
-{% block content %}
-<h1>Pharmacy Login</h1>
-<form method="post">
-  <label>Username <input type="text" name="username" required autofocus></label>
-  <label>Password <input type="password" name="password" required></label>
-  <button type="submit">Log In</button>
-</form>
+{% block auth_content %}
+<div class="auth-card">
+  <div class="brand"><span class="mark">P</span> Shreekunj Pharmacy</div>
+  <h1>Sign in</h1>
+  <p class="page-desc">Enter your username and password to access the system.</p>
+  <form method="post" class="styled-form">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" required autofocus>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" required>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">Log In</button>
+  </form>
+</div>
 {% endblock %}

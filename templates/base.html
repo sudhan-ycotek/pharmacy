@@ -1,26 +1,76 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Pharmacy Inventory{% endblock %}</title>
+  <title>{% block title %}Pharmacy{% endblock %} — Shreekunj Pharmacy</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% if session.get('user_id') %}
-  <nav>
-    <a href="{{ url_for('dashboard.home') }}">Dashboard</a>
-    <span class="user-info">{{ session.get('username') }} ({{ session.get('role') }})</span>
-    <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form">
-      <button type="submit">Logout</button>
-    </form>
-  </nav>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="mark">P</span> Shreekunj Pharmacy</div>
+      <div class="nav-label">Menu</div>
+      <a class="nav-item {{ 'active' if request.endpoint == 'dashboard.home' }}" href="{{ url_for('dashboard.home') }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>
+        Dashboard
+      </a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'sales.new_sale' }}" href="{{ url_for('sales.new_sale') }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="14" rx="2"></rect><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"></path><path d="M2 11h20"></path></svg>
+        POS
+      </a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'inventory.list_medicines_view' }}" href="{{ url_for('inventory.list_medicines_view') }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"></path><path d="M3 8h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>
+        Products
+      </a>
+      <a class="nav-item {{ 'active' if request.endpoint == 'sales.list_sales_view' }}" href="{{ url_for('sales.list_sales_view') }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>
+        Sales History
+      </a>
+      {% if session.get('role') == 'admin' %}
+      <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('users.') }}" href="{{ url_for('users.list_users') }}">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+        Staff Accounts
+      </a>
+      {% endif %}
+      <div class="sidebar-bottom">
+        <div class="nav-label">Settings</div>
+        <a class="nav-item {{ 'active' if request.endpoint == 'auth.change_password' }}" href="{{ url_for('auth.change_password') }}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20a8 8 0 1 0-8-8"></path><path d="M12 12v-4"></path><path d="M12 12l3 2"></path></svg>
+          Change Password
+        </a>
+        <form method="post" action="{{ url_for('auth.logout') }}">
+          <button type="submit" class="nav-item logout-btn">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg>
+            Log Out
+          </button>
+        </form>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1>{% block page_title %}{% endblock %}</h1>
+          <p class="page-desc">{% block page_desc %}{% endblock %}</p>
+        </div>
+        <div class="who"><span class="avatar">{{ session.get('username', '?')[:2]|upper }}</span> {{ session.get('username') }} · {{ session.get('role')|capitalize }}</div>
+      </div>
+      {% for message in get_flashed_messages() %}
+        <div class="flash">{{ message }}</div>
+      {% endfor %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  {% else %}
+  <div class="auth-shell">
+    {% for message in get_flashed_messages() %}
+      <div class="flash">{{ message }}</div>
+    {% endfor %}
+    {% block auth_content %}{% endblock %}
+  </div>
   {% endif %}
-  {% for message in get_flashed_messages() %}
-    <p class="flash">{{ message }}</p>
-  {% endfor %}
-  <main>
-    {% block content %}{% endblock %}
-  </main>
+  <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

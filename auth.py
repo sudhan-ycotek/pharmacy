@@ -28,6 +28,20 @@ def verify_login(username, password):
     return user
 
 
+def change_own_password(user_id, current_password, new_password):
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None or not check_password_hash(user["password_hash"], current_password):
+        raise ValueError("current password is incorrect")
+    if not new_password:
+        raise ValueError("new password cannot be empty")
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (generate_password_hash(new_password), user_id),
+    )
+    db.commit()
+
+
 def current_user():
     user_id = session.get("user_id")
     if user_id is None:
@@ -78,6 +92,25 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("auth.login"))
+
+
+@bp.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        try:
+            change_own_password(
+                session["user_id"],
+                request.form["current_password"],
+                request.form["new_password"],
+            )
+            flash("Password updated.")
+            return redirect(url_for("auth.change_password"))
+        except ValueError as e:
+            flash(str(e))
+        except KeyError:
+            flash("Invalid form input")
+    return render_template("change_password.html")
 
 
 @click.command("init-admin")
