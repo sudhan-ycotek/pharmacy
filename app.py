@@ -1,8 +1,9 @@
 import os
 
-from flask import Blueprint, Flask
+from flask import Flask
 
 import auth
+import dashboard
 import db as db_module
 import inventory
 
@@ -25,18 +26,9 @@ def create_app(test_config=None):
             db_module.init_db(os.path.join(BASE_DIR, "schema.sql"))
 
     app.register_blueprint(auth.bp)
+    app.register_blueprint(dashboard.bp)
     app.register_blueprint(inventory.bp)
     app.cli.add_command(auth.init_admin_command)
-
-    # Add a stub dashboard blueprint for testing (Task 4 to implement full dashboard)
-    if app.config.get("TESTING"):
-        dashboard_bp = Blueprint("dashboard", __name__)
-
-        @dashboard_bp.route("/")
-        def home():
-            return "Dashboard", 200
-
-        app.register_blueprint(dashboard_bp)
 
     return app
 

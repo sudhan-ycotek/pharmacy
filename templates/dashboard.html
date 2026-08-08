@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p><a href="{{ url_for('inventory.list_medicines_view') }}">Medicines</a></p>
+
+<h2>Low Stock Medicines</h2>
+{% if low_stock %}
+<table>
+  <tr><th>Name</th><th>Stock (base units)</th><th>Threshold</th></tr>
+  {% for m in low_stock %}
+  <tr class="low-stock">
+    <td>{{ m['name'] }}</td>
+    <td>{{ m['stock_in_base_units'] }}</td>
+    <td>{{ m['low_stock_threshold'] }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No medicines are low on stock.</p>
+{% endif %}
+{% endblock %}

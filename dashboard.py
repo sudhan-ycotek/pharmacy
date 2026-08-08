@@ -1,0 +1,12 @@
+from flask import Blueprint, render_template
+
+from auth import login_required
+from inventory import low_stock_medicines
+
+bp = Blueprint("dashboard", __name__)
+
+
+@bp.route("/")
+@login_required
+def home():
+    return render_template("dashboard.html", low_stock=low_stock_medicines())
