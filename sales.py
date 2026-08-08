@@ -30,19 +30,19 @@ def create_sale(user_id, items):
         if quantity <= 0:
             raise ValueError("quantity must be positive")
 
-        unit_row = db.execute(
-            "SELECT qty_in_base_units, price FROM medicine_units "
-            "WHERE medicine_id = ? AND unit_name = ?",
-            (medicine_id, unit_name),
-        ).fetchone()
-        if unit_row is None:
-            raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
-
         medicine_row = db.execute(
-            "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
+            "SELECT name, stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
         ).fetchone()
         if medicine_row is None:
             raise ValueError(f"medicine {medicine_id} not found")
+
+        unit_row = db.execute(
+            "SELECT qty_in_base_units, price FROM medicine_units "
+            "WHERE medicine_id = ? AND unit_name = ? AND is_sellable = 1",
+            (medicine_id, unit_name),
+        ).fetchone()
+        if unit_row is None:
+            raise ValueError(f"unknown unit '{unit_name}' for {medicine_row['name']}")
 
         base_units_needed = unit_row["qty_in_base_units"] * quantity
 
@@ -52,7 +52,7 @@ def create_sale(user_id, items):
         cumulative_demand[medicine_id] += base_units_needed
 
         if medicine_row["stock_in_base_units"] < cumulative_demand[medicine_id]:
-            raise ValueError(f"insufficient stock for medicine {medicine_id}")
+            raise ValueError(f"Not enough {medicine_row['name']} in stock")
 
         subtotal = round(unit_row["price"] * quantity, 2)
         total += subtotal

@@ -32,9 +32,24 @@ def test_create_sale_rejects_insufficient_stock(app):
     with app.app_context():
         from auth import create_user
         user_id = create_user("staff1", "pw", "staff")
+        # 1 box = 240 base units = 12 files; requesting 100 files genuinely exceeds stock.
         with pytest.raises(ValueError):
             create_sale(user_id, [
-                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 5},
+                {"medicine_id": medicine_id, "unit_name": "File", "quantity": 100},
+            ])
+
+
+def test_create_sale_rejects_box_unit_as_unsellable(app):
+    medicine_id = _setup_medicine(app, stock_boxes=5)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        # Box is never sellable (is_sellable=0), so this must be rejected even though
+        # stock is plentiful (5 boxes) — this exercises server-side enforcement of
+        # is_sellable independent of the stock-sufficiency check.
+        with pytest.raises(ValueError):
+            create_sale(user_id, [
+                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1},
             ])
 
 
@@ -123,12 +138,14 @@ def test_create_sale_rejects_duplicate_items_exceeding_stock(app):
     with app.app_context():
         from auth import create_user
         user_id = create_user("staff1", "pw", "staff")
-        # Two line items for same medicine, together exceeding stock (1 box = 240 base units)
-        # Each line item is 1 box = 240 base units, so 2 boxes = 480 exceeds 240 stock
+        # Two line items for same medicine, together exceeding stock (1 box = 240 base units).
+        # Each line item is 7 files = 140 base units, so 2 lines = 280 exceeds 240 stock.
+        # (Uses File rather than Box since Box is never sellable and would be rejected
+        # before the cumulative-demand check this test exists to exercise.)
         with pytest.raises(ValueError):
             create_sale(user_id, [
-                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1},
-                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1},
+                {"medicine_id": medicine_id, "unit_name": "File", "quantity": 7},
+                {"medicine_id": medicine_id, "unit_name": "File", "quantity": 7},
             ])
         medicine = get_medicine(medicine_id)
         # Verify stock unchanged (no partial mutation)
