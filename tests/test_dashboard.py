@@ -1,16 +1,12 @@
-from inventory import add_medicine, add_stock
+from inventory import add_stock
 from auth import create_user
 from sales import create_sale
-
-TABLET_UNITS = [
-    {"unit_name": "Box", "qty_in_base_units": 240, "price": 480.0},
-    {"unit_name": "Tablet", "qty_in_base_units": 1, "price": 2.5},
-]
+from helpers import make_box_file_medicine
 
 
 def test_dashboard_shows_low_stock(admin_client, app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 100, TABLET_UNITS)
+        medicine_id = make_box_file_medicine(name="Cetamol", low_stock_threshold=100)
         add_stock(medicine_id, "Tablet", 10)  # below threshold of 100
 
     response = admin_client.get("/")
@@ -26,7 +22,7 @@ def test_dashboard_requires_login(client):
 
 def test_dashboard_shows_todays_sales_total(admin_client, app):
     with app.app_context():
-        medicine_id = add_medicine("Napa", "Tablet", 100, TABLET_UNITS)
+        medicine_id = make_box_file_medicine(name="Napa", low_stock_threshold=100)
         add_stock(medicine_id, "Tablet", 100)
         user_id = create_user("cashier1", "pw", "staff")
         create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}])

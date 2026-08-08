@@ -1,18 +1,13 @@
 import pytest
 
-from inventory import add_medicine, get_medicine
+from inventory import get_medicine
 from sales import create_sale, get_sale, list_sales, today_sales_total, void_sale
-
-TABLET_UNITS = [
-    {"unit_name": "Box", "qty_in_base_units": 240, "price": 480.0},
-    {"unit_name": "File", "qty_in_base_units": 20, "price": 45.0},
-    {"unit_name": "Tablet", "qty_in_base_units": 1, "price": 2.5},
-]
+from helpers import make_box_file_medicine
 
 
 def _setup_medicine(app, stock_boxes=5):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine(name="Cetamol", low_stock_threshold=50)
         from inventory import add_stock
         add_stock(medicine_id, "Box", stock_boxes)
         return medicine_id

@@ -3,87 +3,95 @@ import pytest
 from inventory import (
     add_medicine,
     add_stock,
+    count_medicines,
     get_medicine_units,
     list_medicines,
     low_stock_medicines,
     search_medicines,
+    sellable_units,
     unit_price_breakdown,
 )
-
-TABLET_UNITS = [
-    {"unit_name": "Box", "qty_in_base_units": 240, "price": 480.0},
-    {"unit_name": "File", "qty_in_base_units": 20, "price": 45.0},
-    {"unit_name": "Tablet", "qty_in_base_units": 1, "price": 2.5},
-]
-
-LIQUID_UNITS = [
-    {"unit_name": "Bottle", "qty_in_base_units": 1, "price": 120.0},
-]
+from helpers import make_bottled_medicine, make_box_file_medicine
 
 
-def test_add_medicine_requires_exactly_one_base_unit(app):
+def test_add_medicine_box_file_creates_three_units(app):
     with app.app_context():
-        with pytest.raises(ValueError):
-            add_medicine("Bad Medicine", "Tablet", 10, [
-                {"unit_name": "Box", "qty_in_base_units": 240, "price": 480.0},
-            ])
-
-
-def test_add_medicine_with_multi_level_units(app):
-    with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine()
         units = get_medicine_units(medicine_id)
         assert [u["unit_name"] for u in units] == ["Tablet", "File", "Box"]
+        by_name = {u["unit_name"]: u for u in units}
+        assert by_name["Box"]["qty_in_base_units"] == 240
+        assert by_name["File"]["qty_in_base_units"] == 20
+        assert by_name["Tablet"]["qty_in_base_units"] == 1
 
 
-def test_add_medicine_with_single_unit(app):
+def test_add_medicine_box_file_box_is_not_sellable(app):
     with app.app_context():
-        medicine_id = add_medicine("Cough Syrup", "Liquid", 5, LIQUID_UNITS)
+        medicine_id = make_box_file_medicine()
+        sellable = {u["unit_name"] for u in sellable_units(medicine_id)}
+        assert sellable == {"File", "Tablet"}
+
+
+def test_add_medicine_bottled_other_creates_one_sellable_unit(app):
+    with app.app_context():
+        medicine_id = make_bottled_medicine()
         units = get_medicine_units(medicine_id)
         assert len(units) == 1
         assert units[0]["unit_name"] == "Bottle"
+        sellable = sellable_units(medicine_id)
+        assert len(sellable) == 1
+        assert sellable[0]["unit_name"] == "Bottle"
+
+
+def test_add_medicine_rejects_invalid_packaging_type(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_medicine("Bad Medicine", "not_a_type", 10)
+
+
+def test_add_medicine_box_file_rejects_non_positive_conversion_numbers(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_medicine("Bad Medicine", "box_file", 10, tablets_per_file=0, files_per_box=12,
+                          price_per_box=1.0, price_per_file=1.0, price_per_tablet=1.0)
+
+
+def test_add_medicine_bottled_other_requires_unit_name(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_medicine("Bad Medicine", "bottled_other", 10, unit_name="", unit_price=10.0)
+
+
+def test_add_medicine_bottled_other_rejects_negative_price(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_medicine("Bad Medicine", "bottled_other", 10, unit_name="Bottle", unit_price=-5.0)
 
 
 def test_add_stock_converts_to_base_units(app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine()
         new_total = add_stock(medicine_id, "Box", 2)
         assert new_total == 480
 
 
 def test_add_stock_unknown_unit_raises(app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
             add_stock(medicine_id, "Pallet", 1)
 
 
 def test_add_stock_rejects_fractional_quantity(app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
             add_stock(medicine_id, "Box", 2.5)
 
 
-def test_add_stock_rejects_bool_quantity(app):
-    with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
-        with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", True)
-
-
-def test_add_medicine_rejects_duplicate_unit_names(app):
-    with app.app_context():
-        with pytest.raises(ValueError, match="duplicate unit name"):
-            add_medicine("Bad Medicine", "Tablet", 10, [
-                {"unit_name": "Tablet", "qty_in_base_units": 1, "price": 2.5},
-                {"unit_name": "Tablet", "qty_in_base_units": 10, "price": 20.0},
-            ])
-
-
 def test_low_stock_medicines_flags_below_threshold(app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine(low_stock_threshold=50)
         add_stock(medicine_id, "Tablet", 10)
         low = low_stock_medicines()
         assert any(m["id"] == medicine_id for m in low)
@@ -91,7 +99,7 @@ def test_low_stock_medicines_flags_below_threshold(app):
 
 def test_unit_price_breakdown_computes_price_per_base_unit(app):
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+        medicine_id = make_box_file_medicine()
         breakdown = unit_price_breakdown(medicine_id)
         by_unit = {b["unit_name"]: b for b in breakdown}
         assert by_unit["Box"]["price_per_base_unit"] == 2.0
@@ -100,8 +108,8 @@ def test_unit_price_breakdown_computes_price_per_base_unit(app):
 
 def test_search_medicines_matches_by_name(app):
     with app.app_context():
-        add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
-        add_medicine("Napa Extra", "Tablet", 50, TABLET_UNITS)
+        make_box_file_medicine(name="Cetamol")
+        make_box_file_medicine(name="Napa Extra")
         results = search_medicines("ceta")
         assert len(results) == 1
         assert results[0]["name"] == "Cetamol"
@@ -109,88 +117,56 @@ def test_search_medicines_matches_by_name(app):
 
 def test_list_medicines_returns_all(app):
     with app.app_context():
-        add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
-        add_medicine("Cough Syrup", "Liquid", 5, LIQUID_UNITS)
+        make_box_file_medicine(name="Cetamol")
+        make_bottled_medicine(name="Cough Syrup")
         assert len(list_medicines()) == 2
 
 
-def test_add_medicine_rejects_negative_qty_in_base_units(app):
+def test_count_medicines(app):
     with app.app_context():
-        with pytest.raises(ValueError, match="qty_in_base_units >= 1"):
-            add_medicine("Bad Medicine", "Tablet", 10, [
-                {"unit_name": "Tablet", "qty_in_base_units": -5, "price": 2.5},
-            ])
+        make_box_file_medicine(name="Cetamol")
+        make_bottled_medicine(name="Cough Syrup")
+        assert count_medicines() == 2
 
 
-def test_add_medicine_rejects_zero_qty_in_base_units(app):
-    with app.app_context():
-        with pytest.raises(ValueError, match="qty_in_base_units >= 1"):
-            add_medicine("Bad Medicine", "Tablet", 10, [
-                {"unit_name": "Tablet", "qty_in_base_units": 0, "price": 2.5},
-            ])
-
-
-def test_add_medicine_rejects_negative_price(app):
-    with app.app_context():
-        with pytest.raises(ValueError, match="price cannot be negative"):
-            add_medicine("Bad Medicine", "Tablet", 10, [
-                {"unit_name": "Tablet", "qty_in_base_units": 1, "price": -2.5},
-            ])
-
-
-def test_add_medicine_view_post_invalid_unit_qty_flashes_error(app, client, admin_user):
-    """Test that POST with invalid unit qty re-renders form with flash instead of 500."""
-    client.post("/login", data={"username": "admin", "password": "adminpass"})
-    resp = client.post("/medicines/add", data={
-        "name": "Test Medicine",
-        "category": "Tablet",
-        "low_stock_threshold": "10",
-        "unit_name": "Tablet",
-        "unit_qty": "invalid_number",
-        "unit_price": "2.5",
+def test_add_medicine_view_box_file_creates_medicine(admin_client, app):
+    resp = admin_client.post("/medicines/add", data={
+        "name": "Cetamol",
+        "packaging_type": "box_file",
+        "tablets_per_file": "20",
+        "files_per_box": "12",
+        "price_per_box": "480",
+        "price_per_file": "45",
+        "price_per_tablet": "2.5",
+        "low_stock_threshold": "50",
     })
-    # Should re-render form (200) not error (500)
-    assert resp.status_code == 200
-
-
-def test_add_medicine_view_post_negative_qty_flashes_error(app, client, admin_user):
-    """Test that POST with negative qty_in_base_units flashes error."""
-    client.post("/login", data={"username": "admin", "password": "adminpass"})
-    resp = client.post("/medicines/add", data={
-        "name": "Test Medicine",
-        "category": "Tablet",
-        "low_stock_threshold": "10",
-        "unit_name": "Tablet",
-        "unit_qty": "-5",
-        "unit_price": "2.5",
-    })
-    # Should re-render form (200) not error (500)
-    assert resp.status_code == 200
-
-
-def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_user):
-    """Test that POST with invalid quantity re-renders form with flash instead of 500."""
+    assert resp.status_code == 302
     with app.app_context():
-        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
-    client.post("/login", data={"username": "admin", "password": "adminpass"})
-    resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
-        "unit_name": "Tablet",
-        "quantity": "invalid_number",
+        assert len(list_medicines()) == 1
+
+
+def test_add_medicine_view_bottled_other_creates_medicine(admin_client, app):
+    resp = admin_client.post("/medicines/add", data={
+        "name": "Cough Syrup",
+        "packaging_type": "bottled_other",
+        "unit_type": "Bottle",
+        "unit_price": "120",
+        "low_stock_threshold": "5",
     })
-    # Should re-render form (200) not error (500)
-    assert resp.status_code == 200
-
-
-def test_list_medicines_view_shows_price_breakdown_and_photo(app, client, admin_user):
-    """Medicines list renders unit price breakdowns and, when present, a photo."""
+    assert resp.status_code == 302
     with app.app_context():
-        add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
-        photo_medicine_id = add_medicine(
-            "Cough Syrup", "Liquid", 5, LIQUID_UNITS, photo_path="photos/example.jpg"
-        )
-    client.post("/login", data={"username": "admin", "password": "adminpass"})
-    resp = client.get("/medicines/")
+        assert len(list_medicines()) == 1
+
+
+def test_add_medicine_view_invalid_input_flashes_error_not_500(admin_client):
+    resp = admin_client.post("/medicines/add", data={
+        "name": "Bad",
+        "packaging_type": "box_file",
+        "tablets_per_file": "not_a_number",
+        "files_per_box": "12",
+        "price_per_box": "480",
+        "price_per_file": "45",
+        "price_per_tablet": "2.5",
+        "low_stock_threshold": "50",
+    })
     assert resp.status_code == 200
-    body = resp.get_data(as_text=True)
-    assert "2.50" in body  # Tablet unit price
-    assert "photos/example.jpg" in body

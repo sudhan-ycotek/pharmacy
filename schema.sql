@@ -8,7 +8,7 @@ CREATE TABLE users (
 CREATE TABLE medicines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    category TEXT,
+    packaging_type TEXT NOT NULL CHECK(packaging_type IN ('box_file', 'bottled_other')),
     photo_path TEXT,
     stock_in_base_units INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 10
@@ -20,6 +20,7 @@ CREATE TABLE medicine_units (
     unit_name TEXT NOT NULL,
     qty_in_base_units INTEGER NOT NULL,
     price REAL NOT NULL,
+    is_sellable INTEGER NOT NULL DEFAULT 1,
     UNIQUE(medicine_id, unit_name)
 );
 
