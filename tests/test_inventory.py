@@ -89,3 +89,70 @@ def test_list_medicines_returns_all(app):
         add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
         add_medicine("Cough Syrup", "Liquid", 5, LIQUID_UNITS)
         assert len(list_medicines()) == 2
+
+
+def test_add_medicine_rejects_negative_qty_in_base_units(app):
+    with app.app_context():
+        with pytest.raises(ValueError, match="qty_in_base_units >= 1"):
+            add_medicine("Bad Medicine", "Tablet", 10, [
+                {"unit_name": "Tablet", "qty_in_base_units": -5, "price": 2.5},
+            ])
+
+
+def test_add_medicine_rejects_zero_qty_in_base_units(app):
+    with app.app_context():
+        with pytest.raises(ValueError, match="qty_in_base_units >= 1"):
+            add_medicine("Bad Medicine", "Tablet", 10, [
+                {"unit_name": "Tablet", "qty_in_base_units": 0, "price": 2.5},
+            ])
+
+
+def test_add_medicine_rejects_negative_price(app):
+    with app.app_context():
+        with pytest.raises(ValueError, match="price cannot be negative"):
+            add_medicine("Bad Medicine", "Tablet", 10, [
+                {"unit_name": "Tablet", "qty_in_base_units": 1, "price": -2.5},
+            ])
+
+
+def test_add_medicine_view_post_invalid_unit_qty_flashes_error(app, client, admin_user):
+    """Test that POST with invalid unit qty re-renders form with flash instead of 500."""
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post("/medicines/add", data={
+        "name": "Test Medicine",
+        "category": "Tablet",
+        "low_stock_threshold": "10",
+        "unit_name": "Tablet",
+        "unit_qty": "invalid_number",
+        "unit_price": "2.5",
+    })
+    # Should re-render form (200) not error (500)
+    assert resp.status_code == 200
+
+
+def test_add_medicine_view_post_negative_qty_flashes_error(app, client, admin_user):
+    """Test that POST with negative qty_in_base_units flashes error."""
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post("/medicines/add", data={
+        "name": "Test Medicine",
+        "category": "Tablet",
+        "low_stock_threshold": "10",
+        "unit_name": "Tablet",
+        "unit_qty": "-5",
+        "unit_price": "2.5",
+    })
+    # Should re-render form (200) not error (500)
+    assert resp.status_code == 200
+
+
+def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_user):
+    """Test that POST with invalid quantity re-renders form with flash instead of 500."""
+    with app.app_context():
+        medicine_id = add_medicine("Cetamol", "Tablet", 50, TABLET_UNITS)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
+        "unit_name": "Tablet",
+        "quantity": "invalid_number",
+    })
+    # Should re-render form (200) not error (500)
+    assert resp.status_code == 200

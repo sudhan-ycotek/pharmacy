@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from auth import role_required
 from db import get_db
@@ -9,6 +9,14 @@ bp = Blueprint("inventory", __name__, url_prefix="/medicines")
 def add_medicine(name, category, low_stock_threshold, units):
     if not units:
         raise ValueError("medicine must have at least one unit")
+
+    # Validate all units have positive qty_in_base_units and non-negative prices
+    for u in units:
+        if not isinstance(u["qty_in_base_units"], int) or u["qty_in_base_units"] < 1:
+            raise ValueError(f"unit '{u['unit_name']}' must have qty_in_base_units >= 1")
+        if u["price"] < 0:
+            raise ValueError(f"unit '{u['unit_name']}' price cannot be negative")
+
     base_units = [u for u in units if u["qty_in_base_units"] == 1]
     if len(base_units) != 1:
         raise ValueError("medicine must have exactly one base unit (qty_in_base_units = 1)")
@@ -105,21 +113,26 @@ def list_medicines_view():
 @role_required("admin")
 def add_medicine_view():
     if request.method == "POST":
-        unit_names = request.form.getlist("unit_name")
-        unit_qtys = request.form.getlist("unit_qty")
-        unit_prices = request.form.getlist("unit_price")
-        units = [
-            {"unit_name": n, "qty_in_base_units": int(q), "price": float(p)}
-            for n, q, p in zip(unit_names, unit_qtys, unit_prices)
-            if n.strip()
-        ]
-        add_medicine(
-            request.form["name"],
-            request.form["category"],
-            int(request.form["low_stock_threshold"]),
-            units,
-        )
-        return redirect(url_for("inventory.list_medicines_view"))
+        try:
+            unit_names = request.form.getlist("unit_name")
+            unit_qtys = request.form.getlist("unit_qty")
+            unit_prices = request.form.getlist("unit_price")
+            units = [
+                {"unit_name": n, "qty_in_base_units": int(q), "price": round(float(p), 2)}
+                for n, q, p in zip(unit_names, unit_qtys, unit_prices)
+                if n.strip()
+            ]
+            add_medicine(
+                request.form["name"],
+                request.form["category"],
+                int(request.form["low_stock_threshold"]),
+                units,
+            )
+            return redirect(url_for("inventory.list_medicines_view"))
+        except ValueError as e:
+            flash(str(e))
+        except (KeyError, TypeError) as e:
+            flash("Invalid form input")
     return render_template("medicine_add.html")
 
 
@@ -128,8 +141,13 @@ def add_medicine_view():
 def add_stock_view(medicine_id):
     medicine = get_medicine(medicine_id)
     if request.method == "POST":
-        add_stock(medicine_id, request.form["unit_name"], int(request.form["quantity"]))
-        return redirect(url_for("inventory.list_medicines_view"))
+        try:
+            add_stock(medicine_id, request.form["unit_name"], int(request.form["quantity"]))
+            return redirect(url_for("inventory.list_medicines_view"))
+        except ValueError as e:
+            flash(str(e))
+        except (KeyError, TypeError) as e:
+            flash("Invalid form input")
     return render_template(
         "add_stock.html", medicine=medicine, units=get_medicine_units(medicine_id)
     )
