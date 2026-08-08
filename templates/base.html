@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Pharmacy Inventory{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if session.get('user_id') %}
+  <nav>
+    <a href="{{ url_for('dashboard.home') }}">Dashboard</a>
+    <span class="user-info">{{ session.get('username') }} ({{ session.get('role') }})</span>
+    <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form">
+      <button type="submit">Logout</button>
+    </form>
+  </nav>
+  {% endif %}
+  {% for message in get_flashed_messages() %}
+    <p class="flash">{{ message }}</p>
+  {% endfor %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
