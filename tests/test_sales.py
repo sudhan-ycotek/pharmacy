@@ -282,3 +282,31 @@ def test_list_sales_includes_seller_username(app):
         create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
         sales = list_sales()
         assert sales[0]["username"] == "cashier1"
+
+
+def test_receipt_route_forbids_other_staff_but_allows_owner_and_admin(app, client):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        create_user("boss", "bosspass", "admin")
+        owner_id = create_user("owner", "ownerpass", "staff")
+        create_user("intruder", "intruderpass", "staff")
+        result = create_sale(owner_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+    sale_id = result["sale_id"]
+
+    # A different staff member must not be able to view someone else's receipt.
+    client.post("/login", data={"username": "intruder", "password": "intruderpass"})
+    other_resp = client.get(f"/sales/{sale_id}/receipt")
+    assert other_resp.status_code == 403
+    client.post("/logout")
+
+    # The staff member who made the sale can still view their own receipt.
+    client.post("/login", data={"username": "owner", "password": "ownerpass"})
+    owner_resp = client.get(f"/sales/{sale_id}/receipt")
+    assert owner_resp.status_code == 200
+    client.post("/logout")
+
+    # Admin can view any receipt regardless of who made the sale.
+    client.post("/login", data={"username": "boss", "password": "bosspass"})
+    admin_resp = client.get(f"/sales/{sale_id}/receipt")
+    assert admin_resp.status_code == 200

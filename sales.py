@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
 
 from auth import current_user, login_required, role_required
 from db import get_db
@@ -206,6 +206,9 @@ def receipt(sale_id):
     sale = get_sale(sale_id)
     if sale is None:
         return "Sale not found", 404
+    user = current_user()
+    if user["role"] != "admin" and sale["sale"]["user_id"] != user["id"]:
+        abort(403)
     return render_template("receipt.html", sale=sale["sale"], items=sale["items"])
 
 
