@@ -102,3 +102,42 @@ def test_users_delete_with_invalid_id_returns_gracefully(admin_client):
     """POSTing delete for non-existent user returns redirect with flash, not 500"""
     response = admin_client.post("/users/999/delete")
     assert response.status_code == 302  # Should redirect, not 500
+
+
+def test_reset_staff_password_updates_password(app):
+    with app.app_context():
+        from auth import create_user, verify_login
+        from users import reset_staff_password
+        user_id = create_user("staff1", "oldpass", "staff")
+        reset_staff_password(user_id, "newpass123")
+        assert verify_login("staff1", "newpass123") is not None
+        assert verify_login("staff1", "oldpass") is None
+
+
+def test_reset_staff_password_refuses_admin_target(app):
+    with app.app_context():
+        import pytest
+        from auth import create_user
+        from users import reset_staff_password
+        admin_id = create_user("admin", "pw", "admin")
+        with pytest.raises(ValueError):
+            reset_staff_password(admin_id, "newpass123")
+
+
+def test_reset_password_route_requires_admin(staff_client, app):
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff2", "pw", "staff")
+    response = staff_client.post(f"/users/{user_id}/reset-password", data={"new_password": "newpass123"})
+    assert response.status_code == 403
+
+
+def test_reset_password_route_updates_and_redirects(admin_client, app):
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff2", "oldpass", "staff")
+    response = admin_client.post(f"/users/{user_id}/reset-password", data={"new_password": "newpass123"})
+    assert response.status_code == 302
+    with app.app_context():
+        from auth import verify_login
+        assert verify_login("staff2", "newpass123") is not None

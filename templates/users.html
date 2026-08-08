@@ -1,25 +1,69 @@
 {% extends "base.html" %}
-{% block title %}Staff Accounts{% endblock %}
+{% block page_title %}Staff Accounts{% endblock %}
+{% block page_desc %}Add, remove, or reset passwords for staff logins.{% endblock %}
 {% block content %}
-<h1>Staff Accounts</h1>
-<table>
-  <tr><th>Username</th><th></th></tr>
-  {% for s in staff %}
-  <tr>
-    <td>{{ s['username'] }}</td>
-    <td>
-      <form method="post" action="{{ url_for('users.delete_user', user_id=s['id']) }}" class="inline-form">
-        <button type="submit">Remove</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+<div class="card panel">
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Username</th><th></th></tr></thead>
+      <tbody>
+      {% for s in staff %}
+      <tr>
+        <td>{{ s['username'] }}</td>
+        <td style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-secondary btn-icon" onclick="openModal('reset-modal-{{ s['id'] }}')">Reset Password</button>
+          <button type="button" class="btn btn-danger btn-icon" onclick="openModal('remove-modal-{{ s['id'] }}')">Remove</button>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not staff %}<p class="panel-desc">No staff accounts yet.</p>{% endif %}
+</div>
 
-<h2>Add Staff Account</h2>
-<form method="post" action="{{ url_for('users.add_user') }}">
-  <label>Username <input type="text" name="username" required></label>
-  <label>Password <input type="password" name="password" required></label>
-  <button type="submit">Add</button>
-</form>
+{% for s in staff %}
+<div class="modal-backdrop" id="reset-modal-{{ s['id'] }}">
+  <div class="modal">
+    <h3>Reset password for {{ s['username'] }}</h3>
+    <form method="post" action="{{ url_for('users.reset_password', user_id=s['id']) }}" class="styled-form">
+      <div class="field">
+        <label>New password</label>
+        <input type="password" name="new_password" required minlength="6" autofocus>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('reset-modal-{{ s['id'] }}')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Reset Password</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="modal-backdrop" id="remove-modal-{{ s['id'] }}">
+  <div class="modal">
+    <h3>Remove {{ s['username'] }}?</h3>
+    <p>They will no longer be able to log in. This cannot be undone.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('remove-modal-{{ s['id'] }}')">Cancel</button>
+      <form method="post" action="{{ url_for('users.delete_user', user_id=s['id']) }}">
+        <button type="submit" class="btn btn-danger">Remove</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="card panel">
+  <h2>Add Staff Account</h2>
+  <form method="post" action="{{ url_for('users.add_user') }}" class="styled-form">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" required>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" required minlength="6">
+    </div>
+    <button type="submit" class="btn btn-primary">Add Staff Account</button>
+  </form>
+</div>
 {% endblock %}
