@@ -28,9 +28,9 @@
         </div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Price per box (Rs)</label><input type="number" step="0.01" name="price_per_box" min="0"></div>
-        <div class="field"><label>Price per file (Rs)</label><input type="number" step="0.01" name="price_per_file" min="0"></div>
-        <div class="field"><label>Price per tablet (Rs)</label><input type="number" step="0.01" name="price_per_tablet" min="0"></div>
+        <div class="field"><label>Price per box (Rs)</label><input type="number" step="0.01" name="price_per_box" min="0" required></div>
+        <div class="field"><label>Price per file (Rs)</label><input type="number" step="0.01" name="price_per_file" min="0" required></div>
+        <div class="field"><label>Price per tablet (Rs)</label><input type="number" step="0.01" name="price_per_tablet" min="0" required></div>
       </div>
       <p class="form-preview" id="box-file-preview">1 box = 12 files = 240 tablets</p>
     </div>
@@ -47,7 +47,7 @@
         <label>Custom unit name</label>
         <input type="text" name="custom_unit_name">
       </div>
-      <div class="field"><label>Price per unit (Rs)</label><input type="number" step="0.01" name="unit_price" min="0"></div>
+      <div class="field"><label>Price per unit (Rs)</label><input type="number" step="0.01" name="unit_price" min="0" required></div>
     </div>
 
     <div class="field">

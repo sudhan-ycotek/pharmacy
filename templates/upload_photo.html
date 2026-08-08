@@ -7,20 +7,24 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <main>
-    {% if done %}
-    <h1>Photo uploaded!</h1>
-    <p>You can close this page now.</p>
-    {% else %}
-    <h1>Upload Medicine Photo</h1>
-    {% if error %}
-    <p style="color: red;"><strong>Error:</strong> {{ error }}</p>
-    {% endif %}
-    <form method="post" enctype="multipart/form-data">
-      <input type="file" name="photo" accept="image/*" capture="environment" required>
-      <button type="submit">Upload</button>
-    </form>
-    {% endif %}
-  </main>
+  <div class="auth-shell">
+    <div class="auth-card">
+      <main>
+        {% if done %}
+        <h1>Photo uploaded!</h1>
+        <p>You can close this page now.</p>
+        {% else %}
+        <h1>Upload Medicine Photo</h1>
+        {% if error %}
+        <p class="banner-error"><strong>Error:</strong> {{ error }}</p>
+        {% endif %}
+        <form method="post" enctype="multipart/form-data" class="styled-form">
+          <input type="file" name="photo" accept="image/*" capture="environment" required>
+          <button type="submit" class="btn btn-primary btn-block">Upload</button>
+        </form>
+        {% endif %}
+      </main>
+    </div>
+  </div>
 </body>
 </html>

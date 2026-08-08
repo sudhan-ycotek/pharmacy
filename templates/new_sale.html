@@ -256,7 +256,11 @@ function finalizeSale() {
 }
 document.getElementById("finalize-btn").addEventListener("click", finalizeSale);
 document.addEventListener("keydown", function (e) {
-  if (e.key === "F2") { e.preventDefault(); finalizeSale(); }
+  if (e.key === "F2") {
+    e.preventDefault();
+    if (document.querySelector(".modal-backdrop.open")) { return; }
+    finalizeSale();
+  }
 });
 
 renderBill();

@@ -163,29 +163,34 @@ def add_medicine_view():
             packaging_type = request.form["packaging_type"]
             photo_token = request.form.get("photo_token")
             photo_path = get_token_photo(photo_token) if photo_token else None
-            kwargs = {}
-            if packaging_type == "box_file":
-                kwargs = {
-                    "tablets_per_file": int(request.form["tablets_per_file"]),
-                    "files_per_box": int(request.form["files_per_box"]),
-                    "price_per_box": round(float(request.form["price_per_box"]), 2),
-                    "price_per_file": round(float(request.form["price_per_file"]), 2),
-                    "price_per_tablet": round(float(request.form["price_per_tablet"]), 2),
-                }
-            elif packaging_type == "bottled_other":
-                unit_name = request.form.get("unit_type", "")
-                if unit_name == "Other":
-                    unit_name = request.form.get("custom_unit_name", "").strip()
-                kwargs = {
-                    "unit_name": unit_name,
-                    "unit_price": round(float(request.form["unit_price"]), 2),
-                }
-            else:
+            if packaging_type not in ("box_file", "bottled_other"):
                 raise ValueError("invalid category selected")
+
+            try:
+                if packaging_type == "box_file":
+                    kwargs = {
+                        "tablets_per_file": int(request.form["tablets_per_file"]),
+                        "files_per_box": int(request.form["files_per_box"]),
+                        "price_per_box": round(float(request.form["price_per_box"]), 2),
+                        "price_per_file": round(float(request.form["price_per_file"]), 2),
+                        "price_per_tablet": round(float(request.form["price_per_tablet"]), 2),
+                    }
+                else:
+                    unit_name = request.form.get("unit_type", "")
+                    if unit_name == "Other":
+                        unit_name = request.form.get("custom_unit_name", "").strip()
+                    kwargs = {
+                        "unit_name": unit_name,
+                        "unit_price": round(float(request.form["unit_price"]), 2),
+                    }
+                low_stock_threshold = int(request.form["low_stock_threshold"])
+            except ValueError:
+                raise ValueError("Enter a valid number for every price and quantity field")
+
             add_medicine(
                 request.form["name"],
                 packaging_type,
-                int(request.form["low_stock_threshold"]),
+                low_stock_threshold,
                 photo_path=photo_path,
                 **kwargs,
             )
