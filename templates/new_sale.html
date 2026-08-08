@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}New Sale{% endblock %}
+{% block content %}
+<h1>New Sale</h1>
+<input type="text" id="search-box" placeholder="Search medicine by name...">
+<ul id="search-results"></ul>
+
+<h2>Current Bill</h2>
+<table id="bill-table">
+  <tr><th>Medicine</th><th>Unit</th><th>Qty</th><th>Price</th><th>Subtotal</th></tr>
+</table>
+<p>Total: <span id="bill-total">0.00</span></p>
+<button type="button" id="finalize-btn">Finalize Sale</button>
+
+<script>
+var bill = [];
+
+function render() {
+  var table = document.getElementById("bill-table");
+  table.innerHTML = "<tr><th>Medicine</th><th>Unit</th><th>Qty</th><th>Price</th><th>Subtotal</th></tr>";
+  var total = 0;
+  bill.forEach(function (item) {
+    var subtotal = item.price * item.quantity;
+    total += subtotal;
+    var row = table.insertRow();
+    row.innerHTML = "<td>" + item.name + "</td><td>" + item.unit_name + "</td><td>" +
+      item.quantity + "</td><td>" + item.price.toFixed(2) + "</td><td>" + subtotal.toFixed(2) + "</td>";
+  });
+  document.getElementById("bill-total").textContent = total.toFixed(2);
+}
+
+document.getElementById("search-box").addEventListener("input", function (e) {
+  var q = e.target.value;
+  if (!q) { document.getElementById("search-results").innerHTML = ""; return; }
+  fetch("/sales/search?q=" + encodeURIComponent(q))
+    .then(function (r) { return r.json(); })
+    .then(function (medicines) {
+      var list = document.getElementById("search-results");
+      list.innerHTML = "";
+      medicines.forEach(function (m) {
+        m.units.forEach(function (u) {
+          var li = document.createElement("li");
+          li.textContent = m.name + " - " + u.unit_name + " (" + u.price.toFixed(2) + ")";
+          li.style.cursor = "pointer";
+          li.addEventListener("click", function () {
+            var quantity = parseInt(prompt("Quantity of " + u.unit_name + "?", "1"), 10);
+            if (quantity > 0) {
+              bill.push({ medicine_id: m.id, name: m.name, unit_name: u.unit_name, price: u.price, quantity: quantity });
+              render();
+            }
+          });
+          list.appendChild(li);
+        });
+      });
+    });
+});
+
+document.getElementById("finalize-btn").addEventListener("click", function () {
+  if (bill.length === 0) { return; }
+  fetch("/sales", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: bill.map(function (i) {
+      return { medicine_id: i.medicine_id, unit_name: i.unit_name, quantity: i.quantity };
+    }) }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.error) { alert(data.error); return; }
+      window.location = "/sales/" + data.sale_id + "/receipt";
+    });
+});
+</script>
+{% endblock %}

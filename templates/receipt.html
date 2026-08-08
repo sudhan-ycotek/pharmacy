@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Receipt #{{ sale['id'] }}{% endblock %}
+{% block content %}
+<h1>Receipt #{{ sale['id'] }}{% if sale['voided'] %} (VOIDED){% endif %}</h1>
+<p>Date: {{ sale['timestamp'] }}</p>
+<table>
+  <tr><th>Medicine</th><th>Unit</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr>
+  {% for item in items %}
+  <tr>
+    <td>{{ item['medicine_name'] }}</td>
+    <td>{{ item['unit_name'] }}</td>
+    <td>{{ item['quantity'] }}</td>
+    <td>{{ "%.2f"|format(item['unit_price']) }}</td>
+    <td>{{ "%.2f"|format(item['subtotal']) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p><strong>Total: {{ "%.2f"|format(sale['total']) }}</strong></p>
+<button class="no-print" onclick="window.print()">Print</button>
+{% if session.get('role') == 'admin' and not sale['voided'] %}
+<form method="post" action="{{ url_for('sales.void', sale_id=sale['id']) }}" class="no-print">
+  <button type="submit">Void Sale</button>
+</form>
+{% endif %}
+{% endblock %}
