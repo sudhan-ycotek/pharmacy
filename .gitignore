@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+pharmacy.db
+static/photos/*.jpg
+static/photos/*.png
+!static/photos/.gitkeep
+.pytest_cache/
