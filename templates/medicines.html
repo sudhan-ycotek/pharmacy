@@ -1,36 +1,53 @@
 {% extends "base.html" %}
-{% block title %}Medicines{% endblock %}
+{% block page_title %}Products{% endblock %}
+{% block page_desc %}Manage your medicine catalog, stock levels, and pricing.{% endblock %}
 {% block content %}
-<h1>Medicines</h1>
-{% if session.get('role') == 'admin' %}
-<p><a href="{{ url_for('inventory.add_medicine_view') }}">+ Add Medicine</a></p>
-{% endif %}
-<table>
-  <tr><th>Photo</th><th>Name</th><th>Category</th><th>Stock (base units)</th><th>Threshold</th><th>Unit Prices</th><th></th></tr>
-  {% for m in medicines %}
-  <tr class="{{ 'low-stock' if m['stock_in_base_units'] < m['low_stock_threshold'] else '' }}">
-    <td>
-      {% if m['photo_path'] %}
-      <img src="{{ url_for('static', filename=m['photo_path']) }}" width="60" alt="{{ m['name'] }}">
-      {% endif %}
-    </td>
-    <td>{{ m['name'] }}</td>
-    <td>{{ m['category'] }}</td>
-    <td>{{ m['stock_in_base_units'] }}</td>
-    <td>{{ m['low_stock_threshold'] }}</td>
-    <td>
-      <ul class="price-breakdown">
-        {% for b in price_breakdowns[m['id']] %}
-        <li>{{ b['unit_name'] }}: {{ "%.2f"|format(b['price']) }} ({{ "%.2f"|format(b['price_per_base_unit']) }}/base unit)</li>
-        {% endfor %}
-      </ul>
-    </td>
-    <td>
-      {% if session.get('role') == 'admin' %}
-      <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}">Add Stock</a>
-      {% endif %}
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+<div class="panel-head" style="margin-bottom:14px">
+  <div></div>
+  {% if session.get('role') == 'admin' %}
+  <a href="{{ url_for('inventory.add_medicine_view') }}" class="btn btn-primary">+ Add Medicine</a>
+  {% endif %}
+</div>
+<div class="card panel">
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th></th><th>Medicine</th><th>Category</th><th>Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for m in medicines %}
+      <tr>
+        <td>
+          <div class="thumb">
+            {% if m['photo_path'] %}<img src="{{ url_for('static', filename=m['photo_path']) }}" alt="">
+            {% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"></rect></svg>{% endif %}
+          </div>
+        </td>
+        <td><div class="med-name">{{ m['name'] }}</div></td>
+        <td>{{ "Box/File" if m['packaging_type'] == "box_file" else "Bottled/Other" }}</td>
+        <td>
+          {% for b in price_breakdowns[m['id']] %}
+          <div class="med-sub num">{{ b['unit_name'] }}: Rs {{ "%.2f"|format(b['price']) }}</div>
+          {% endfor %}
+        </td>
+        <td class="num">{{ m['stock_in_base_units'] }}</td>
+        <td>
+          {% if m['stock_in_base_units'] < m['low_stock_threshold'] %}
+          <span class="badge warn">Low Stock</span>
+          {% else %}
+          <span class="badge good">In Stock</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if session.get('role') == 'admin' %}
+          <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}" class="btn btn-secondary btn-icon">Add Stock</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not medicines %}
+  <p class="panel-desc">No medicines yet.</p>
+  {% endif %}
+</div>
 {% endblock %}

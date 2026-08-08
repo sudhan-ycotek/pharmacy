@@ -1,16 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Add Stock{% endblock %}
+{% block page_title %}Add Stock{% endblock %}
+{% block page_desc %}Record newly arrived stock for {{ medicine['name'] }}.{% endblock %}
 {% block content %}
-<h1>Add Stock — {{ medicine['name'] }}</h1>
-<form method="post">
-  <label>Unit
-    <select name="unit_name" required>
-      {% for u in units %}
-      <option value="{{ u['unit_name'] }}">{{ u['unit_name'] }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>Quantity <input type="number" name="quantity" min="1" required></label>
-  <button type="submit">Add Stock</button>
-</form>
+<div class="card panel" style="max-width:420px">
+  <form method="post" class="styled-form">
+    <div class="field">
+      <label>Unit</label>
+      <select name="unit_name" required>
+        {% for u in units %}
+        <option value="{{ u['unit_name'] }}">{{ u['unit_name'] }} (1 = {{ u['qty_in_base_units'] }} base unit{{ 's' if u['qty_in_base_units'] != 1 }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Quantity received</label>
+      <input type="number" name="quantity" min="1" required autofocus>
+    </div>
+    <button type="submit" class="btn btn-primary">Add Stock</button>
+  </form>
+</div>
 {% endblock %}
