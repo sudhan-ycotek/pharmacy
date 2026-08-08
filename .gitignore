@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 pharmacy.db
+secret_key.txt
 static/photos/*.jpg
 static/photos/*.png
 !static/photos/.gitkeep

@@ -1,4 +1,5 @@
 import os
+import secrets
 
 from flask import Flask
 
@@ -11,12 +12,30 @@ import sales
 import users
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SECRET_KEY_PATH = os.path.join(BASE_DIR, "secret_key.txt")
+
+
+def _load_or_create_secret_key():
+    """Read the persisted secret key, generating and saving one on first run.
+
+    A hardcoded key would let anyone forge a signed session cookie, so each
+    deployment gets its own random key stored beside pharmacy.db.
+    """
+    if os.path.exists(SECRET_KEY_PATH):
+        with open(SECRET_KEY_PATH) as f:
+            key = f.read().strip()
+        if key:
+            return key
+    key = secrets.token_hex(32)
+    with open(SECRET_KEY_PATH, "w") as f:
+        f.write(key)
+    return key
 
 
 def create_app(test_config=None):
     app = Flask(__name__, root_path=BASE_DIR)
     app.config.from_mapping(
-        SECRET_KEY="dev-change-me",
+        SECRET_KEY="dev-change-me" if test_config and test_config.get("TESTING") else _load_or_create_secret_key(),
         DATABASE=os.path.join(BASE_DIR, "pharmacy.db"),
     )
     if test_config:
