@@ -121,3 +121,42 @@ def test_void_route_requires_admin(staff_client, app):
         result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
     response = staff_client.post(f"/sales/{result['sale_id']}/void")
     assert response.status_code == 403
+
+
+def test_create_sale_rejects_duplicate_items_exceeding_stock(app):
+    medicine_id = _setup_medicine(app, stock_boxes=1)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        # Two line items for same medicine, together exceeding stock (1 box = 240 base units)
+        # Each line item is 1 box = 240 base units, so 2 boxes = 480 exceeds 240 stock
+        with pytest.raises(ValueError):
+            create_sale(user_id, [
+                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1},
+                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1},
+            ])
+        medicine = get_medicine(medicine_id)
+        # Verify stock unchanged (no partial mutation)
+        assert medicine["stock_in_base_units"] == 1 * 240
+
+
+def test_finalize_route_rejects_missing_items_key(admin_client, app):
+    _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={"not_items": []},
+    )
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "error" in data
+
+
+def test_finalize_route_rejects_non_numeric_quantity(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={"items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": "not_a_number"}]},
+    )
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "error" in data

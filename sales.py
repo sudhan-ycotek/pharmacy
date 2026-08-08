@@ -14,12 +14,22 @@ def create_sale(user_id, items):
     db = get_db()
     prepared = []
     total = 0.0
+    # Track cumulative demand per medicine_id to prevent overselling across duplicate line items
+    cumulative_demand = {}
+
     for item in items:
-        medicine_id = item["medicine_id"]
-        unit_name = item["unit_name"]
-        quantity = item["quantity"]
-        if quantity <= 0:
-            raise ValueError("quantity must be positive")
+        try:
+            medicine_id = item["medicine_id"]
+            unit_name = item["unit_name"]
+            quantity = item["quantity"]
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"invalid item structure: {e}")
+
+        try:
+            if quantity <= 0:
+                raise ValueError("quantity must be positive")
+        except TypeError:
+            raise ValueError("quantity must be a positive number")
 
         unit_row = db.execute(
             "SELECT qty_in_base_units, price FROM medicine_units "
@@ -36,7 +46,13 @@ def create_sale(user_id, items):
             raise ValueError(f"medicine {medicine_id} not found")
 
         base_units_needed = unit_row["qty_in_base_units"] * quantity
-        if medicine_row["stock_in_base_units"] < base_units_needed:
+
+        # Check cumulative demand (including previous items for the same medicine)
+        if medicine_id not in cumulative_demand:
+            cumulative_demand[medicine_id] = 0
+        cumulative_demand[medicine_id] += base_units_needed
+
+        if medicine_row["stock_in_base_units"] < cumulative_demand[medicine_id]:
             raise ValueError(f"insufficient stock for medicine {medicine_id}")
 
         subtotal = round(unit_row["price"] * quantity, 2)
@@ -136,7 +152,20 @@ def finalize():
     payload = request.get_json()
     user = current_user()
     try:
-        result = create_sale(user["id"], payload["items"])
+        # Validate payload structure
+        if payload is None:
+            raise ValueError("request body must be JSON")
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        if "items" not in payload:
+            raise ValueError("request must include 'items' field")
+        items = payload["items"]
+        if not isinstance(items, list):
+            raise ValueError("'items' must be a list")
+        if not items:
+            raise ValueError("sale must include at least one item")
+
+        result = create_sale(user["id"], items)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(result)
