@@ -9,6 +9,7 @@ from inventory import (
     low_stock_medicines,
     search_medicines,
     sellable_units,
+    set_medicine_photo,
     unit_price_breakdown,
 )
 from helpers import make_bottled_medicine, make_box_file_medicine
@@ -169,4 +170,33 @@ def test_add_medicine_view_invalid_input_flashes_error_not_500(admin_client):
         "price_per_tablet": "2.5",
         "low_stock_threshold": "50",
     })
+    assert resp.status_code == 200
+
+
+def test_list_medicines_view_shows_price_breakdown_and_photo(app, client, admin_user):
+    """Medicines list renders unit price breakdowns and, when present, a photo."""
+    with app.app_context():
+        make_box_file_medicine(name="Cetamol")
+        make_bottled_medicine(name="Cough Syrup", unit_name="Bottle", unit_price=120.0)
+        # attach a photo directly for this test — no need to go through the QR flow
+        cough_syrup_id = next(m["id"] for m in list_medicines() if m["name"] == "Cough Syrup")
+        set_medicine_photo(cough_syrup_id, "photos/example.jpg")
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "2.50" in body  # Tablet unit price from make_box_file_medicine's defaults
+    assert "photos/example.jpg" in body
+
+
+def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_user):
+    """Test that POST with invalid quantity re-renders form with flash instead of 500."""
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
+        "unit_name": "Tablet",
+        "quantity": "invalid_number",
+    })
+    # Should re-render form (200) not error (500)
     assert resp.status_code == 200
