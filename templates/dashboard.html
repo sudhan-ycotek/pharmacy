@@ -69,4 +69,32 @@
   <p class="panel-desc">No medicines are low on stock.</p>
   {% endif %}
 </div>
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Recently Added Stock</h2>
+      <p class="panel-desc">Batches received in the last 7 days.</p>
+    </div>
+  </div>
+  {% if recent_stock %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Medicine</th><th>Expiry</th><th class="num">Quantity Received</th><th>Added On</th></tr></thead>
+      <tbody>
+      {% for b in recent_stock %}
+      <tr>
+        <td>{{ b['medicine_name'] }}</td>
+        <td>{{ b['expiry_date'] }}</td>
+        <td class="num">{{ b['quantity_received'] }}</td>
+        <td>{{ b['created_at'] }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No stock has been added in the last 7 days.</p>
+  {% endif %}
+</div>
 {% endblock %}

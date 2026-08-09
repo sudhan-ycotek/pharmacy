@@ -126,8 +126,10 @@ form.styled-form { display:flex; flex-direction:column; gap:14px; max-width:480p
 .modal-backdrop { position:fixed; inset:0; background:rgba(10,14,12,.45); display:none; align-items:center; justify-content:center; z-index:100; padding:20px; }
 .modal-backdrop.open { display:flex; }
 .modal { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); padding:22px; width:100%; max-width:380px; }
+.modal.modal-lg { max-width:560px; padding:26px; }
 .modal h3 { margin:0 0 6px; font-size:16px; }
 .modal p { margin:0 0 16px; font-size:13.5px; color:var(--text-muted); }
+.modal .field + .field { margin-top:16px; }
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
 .banner-error { background:var(--critical-soft); color:var(--critical); border-radius:8px; padding:8px 11px; font-size:12.5px; margin-bottom:12px; }
 

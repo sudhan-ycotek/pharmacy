@@ -2,26 +2,47 @@
 {% block page_title %}Receipt #{{ sale['id'] }}{% endblock %}
 {% block page_desc %}{% if sale['voided'] %}This sale has been voided.{% else %}Printable record of this sale.{% endif %}{% endblock %}
 {% block content %}
-<div class="card panel" style="max-width:520px">
+<div class="card panel" style="max-width:900px; margin:0 auto">
   {% if sale['voided'] %}<span class="badge critical">Voided</span>{% endif %}
   <p class="panel-desc">Date: {{ sale['timestamp'] }} · Sold by: {{ sale['username'] }}</p>
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Medicine</th><th>Unit</th><th>Batch Expiry</th><th class="num">Qty</th>
+          <th class="num">Price</th><th class="num">Discount %</th>
+          {% if session.get('role') == 'admin' %}<th class="num no-print">Cost</th><th class="num no-print">Profit</th>{% endif %}
+          <th class="num">Subtotal</th>
+        </tr>
+      </thead>
       <tbody>
       {% for item in items %}
       <tr>
         <td>{{ item['medicine_name'] }}</td>
         <td>{{ item['unit_name'] }}</td>
+        <td>{{ item['batch_expiry_date'] }}</td>
         <td class="num">{{ item['quantity'] }}</td>
         <td class="num">{{ "%.2f"|format(item['unit_price']) }}</td>
+        <td class="num">{{ "%.1f"|format(item['discount_percent']) }}</td>
+        {% if session.get('role') == 'admin' %}
+        <td class="num no-print">{{ "%.2f"|format(item['cost_price_per_base_unit'] * item['qty_in_base_units']) }}</td>
+        <td class="num no-print">{{ "%.2f"|format(item['profit']) }}</td>
+        {% endif %}
         <td class="num">{{ "%.2f"|format(item['subtotal']) }}</td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  <div class="bill-total-row">Subtotal: Rs {{ "%.2f"|format(sale['subtotal_before_discount']) }}</div>
+  <div class="bill-total-row">
+    Discount{% if sale['discount_mode'] == 'bill' %} ({{ sale['bill_discount_percent'] }}%){% elif sale['discount_mode'] == 'item' %} (per item){% endif %}:
+    -Rs {{ "%.2f"|format(sale['discount_amount']) }}
+  </div>
   <div class="bill-total-row">Total: Rs {{ "%.2f"|format(sale['total']) }}</div>
+  {% if session.get('role') == 'admin' %}
+  <div class="bill-total-row no-print">Profit: Rs {{ "%.2f"|format(total_profit) }}</div>
+  {% endif %}
   <div class="no-print" style="display:flex; gap:10px; margin-top:16px;">
     <button class="btn btn-secondary" onclick="window.print()">Print</button>
     {% if session.get('role') == 'admin' and not sale['voided'] %}

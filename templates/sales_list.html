@@ -5,13 +5,23 @@
 <div class="card panel">
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Date/Time</th><th>Sold By</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <thead>
+        <tr>
+          <th>Date/Time</th><th>Sold By</th><th class="num">Total</th><th class="num">Discount</th>
+          {% if session.get('role') == 'admin' %}<th class="num">Profit</th>{% endif %}
+          <th>Status</th><th></th>
+        </tr>
+      </thead>
       <tbody>
       {% for s in sales %}
       <tr>
         <td>{{ s['timestamp'] }}</td>
         <td>{{ s['username'] }}</td>
         <td class="num">Rs {{ "%.2f"|format(s['total']) }}</td>
+        <td class="num">Rs {{ "%.2f"|format(s['discount_amount']) }}</td>
+        {% if session.get('role') == 'admin' %}
+        <td class="num">Rs {{ "%.2f"|format(s['profit']) }}</td>
+        {% endif %}
         <td>{% if s['voided'] %}<span class="badge critical">Voided</span>{% else %}<span class="badge good">Completed</span>{% endif %}</td>
         <td><a href="{{ url_for('sales.receipt', sale_id=s['id']) }}" class="btn btn-secondary btn-icon">Receipt</a></td>
       </tr>

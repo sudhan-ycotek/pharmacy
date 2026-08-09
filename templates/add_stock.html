@@ -2,10 +2,11 @@
 {% block page_title %}Manage Stock{% endblock %}
 {% block page_desc %}View current stock for {{ medicine['name'] }}, add newly arrived stock, or correct a mistaken entry.{% endblock %}
 {% block content %}
-<div class="card panel" style="max-width:420px; margin:0 auto">
+<div class="card panel" style="max-width:520px; margin:0 auto">
   <p class="panel-desc">Current stock: <strong class="num">{{ medicine['stock_in_base_units'] }}</strong> base units</p>
 
   <h2>Add Stock</h2>
+  <p class="field-hint">Record a newly arrived batch — its expiry date, what it cost, and its printed MRP.</p>
   <form method="post" class="styled-form">
     <input type="hidden" name="action" value="add">
     <div class="field">
@@ -20,13 +21,59 @@
       <label>Quantity received</label>
       <input type="number" name="quantity" min="1" required>
     </div>
+    <div class="field">
+      <label>Expiry date</label>
+      <input type="date" name="expiry_date" required>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Cost price per {{ units[0]['unit_name'] }} (Rs)</label>
+        <input type="number" step="0.01" name="cost_price_per_base_unit" min="0" required>
+      </div>
+      <div class="field">
+        <label>MRP per {{ units[0]['unit_name'] }} (Rs)</label>
+        <input type="number" step="0.01" name="mrp_per_base_unit" min="0" required>
+      </div>
+    </div>
     <button type="submit" class="btn btn-primary">Add Stock</button>
   </form>
 
+  <h2 style="margin-top:20px">Existing Batches</h2>
+  {% if batches %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Expiry</th><th class="num">Cost/unit</th><th class="num">MRP/unit</th><th class="num">Received</th><th class="num">Remaining</th></tr></thead>
+      <tbody>
+      {% for b in batches %}
+      <tr>
+        <td>{{ b['expiry_date'] }}</td>
+        <td class="num">{{ "%.2f"|format(b['cost_price_per_base_unit']) }}</td>
+        <td class="num">{{ "%.2f"|format(b['mrp_per_base_unit']) }}</td>
+        <td class="num">{{ b['quantity_received'] }}</td>
+        <td class="num">{{ b['quantity_remaining'] }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No batches recorded yet.</p>
+  {% endif %}
+
   <h2 style="margin-top:20px">Remove Stock</h2>
-  <p class="field-hint">Use this to correct a mistake — e.g. accidentally added too much.</p>
+  <p class="field-hint">Use this to correct a mistake — e.g. accidentally added too much to a specific batch.</p>
+  {% set available_batches = batches | selectattr('quantity_remaining', 'gt', 0) | list %}
+  {% if available_batches %}
   <form method="post" class="styled-form">
     <input type="hidden" name="action" value="remove">
+    <div class="field">
+      <label>Batch</label>
+      <select name="batch_id" required>
+        {% for b in available_batches %}
+        <option value="{{ b['id'] }}">Expires {{ b['expiry_date'] }} — {{ b['quantity_remaining'] }} base units remaining</option>
+        {% endfor %}
+      </select>
+    </div>
     <div class="field">
       <label>Unit</label>
       <select name="unit_name" required>
@@ -40,6 +87,21 @@
       <input type="number" name="quantity" min="1" required>
     </div>
     <button type="submit" class="btn btn-danger">Remove Stock</button>
+  </form>
+  {% else %}
+  <p class="panel-desc">No stock available to remove.</p>
+  {% endif %}
+
+  <h2 style="margin-top:20px">Max Discount</h2>
+  <p class="field-hint">Largest discount a sales rep may apply on {{ medicine['name'] }}, at any point in a sale.</p>
+  <form method="post" class="styled-form">
+    <input type="hidden" name="action" value="update_discount">
+    <div class="field">
+      <label>Max discount (%)</label>
+      <input type="number" step="0.1" name="max_discount_percent" min="0" max="100"
+             value="{{ medicine['max_discount_percent'] }}" required>
+    </div>
+    <button type="submit" class="btn btn-secondary">Save Max Discount</button>
   </form>
 </div>
 {% endblock %}

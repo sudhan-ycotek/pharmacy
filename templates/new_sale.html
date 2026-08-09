@@ -18,23 +18,45 @@
     </div>
   </div>
   <div id="bill-error" class="banner-error" style="display:none"></div>
+
+  <div class="field-row" style="margin-bottom:12px">
+    <div class="field">
+      <label>Discount</label>
+      <div class="unit-toggle" id="discount-mode-toggle">
+        <button type="button" class="btn btn-secondary selected" data-mode="none">No discount</button>
+        <button type="button" class="btn btn-secondary" data-mode="item">Per item</button>
+        <button type="button" class="btn btn-secondary" data-mode="bill">Whole bill</button>
+      </div>
+    </div>
+    <div class="field" id="bill-discount-field" style="display:none">
+      <label>Bill discount % (max <span id="bill-discount-max">0</span>%)</label>
+      <input type="number" id="bill-discount-input" min="0" step="0.1" value="0">
+    </div>
+  </div>
+
   <div class="table-scroll">
     <table id="bill-table">
-      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th><th></th></tr></thead>
+      <thead><tr><th>Medicine</th><th>Unit</th><th>Batch</th><th class="num">Qty</th><th class="num">Price</th><th class="num" id="discount-col-head" style="display:none">Discount %</th><th class="num">Subtotal</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
+  <div class="bill-total-row">Subtotal: <span class="num" id="bill-subtotal">Rs 0.00</span></div>
+  <div class="bill-total-row">Discount: <span class="num" id="bill-discount-amount">Rs 0.00</span></div>
   <div class="bill-total-row">Total: <span class="num" id="bill-total">Rs 0.00</span></div>
   <button type="button" id="finalize-btn" class="btn btn-primary">Finalize Sale (F2)</button>
 </div>
 
 <div class="modal-backdrop" id="qty-modal">
-  <div class="modal">
+  <div class="modal modal-lg">
     <h3 id="qty-modal-title">Add to bill</h3>
     <div id="qty-modal-error" class="banner-error" style="display:none"></div>
     <div class="field">
       <label>Unit</label>
       <div class="unit-toggle" id="unit-toggle"></div>
+    </div>
+    <div class="field">
+      <label>Batch</label>
+      <div class="unit-toggle" id="batch-toggle"></div>
     </div>
     <div class="field">
       <label>Quantity</label>
@@ -46,6 +68,16 @@
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="discount-limit-modal">
+  <div class="modal">
+    <h3>Discount limit</h3>
+    <p id="discount-limit-message"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary" onclick="closeModal('discount-limit-modal')">OK</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -54,6 +86,9 @@ var currentResults = [];
 var highlightedIndex = -1;
 var activeMedicine = null;
 var activeUnitIndex = 0;
+var activeBatches = [];
+var activeBatchIndex = 0;
+var discountMode = "none";
 
 var searchInput = document.getElementById("search-box");
 var resultsBox = document.getElementById("search-results");
@@ -114,6 +149,7 @@ function selectMedicine(index) {
   document.getElementById("qty-modal-error").style.display = "none";
   document.getElementById("qty-input").value = 1;
   renderUnitToggle();
+  loadBatchesForActiveUnit();
   openModal("qty-modal");
   document.getElementById("qty-input").focus();
 }
@@ -125,8 +161,41 @@ function renderUnitToggle() {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn-secondary" + (i === activeUnitIndex ? " selected" : "");
-    btn.textContent = u.unit_name + " (Rs " + u.price.toFixed(2) + ")";
-    btn.addEventListener("click", function () { activeUnitIndex = i; renderUnitToggle(); });
+    btn.textContent = u.unit_name;
+    btn.addEventListener("click", function () { activeUnitIndex = i; renderUnitToggle(); loadBatchesForActiveUnit(); });
+    toggle.appendChild(btn);
+  });
+}
+
+function loadBatchesForActiveUnit() {
+  var unit = activeMedicine.units[activeUnitIndex];
+  var toggle = document.getElementById("batch-toggle");
+  toggle.innerHTML = "Loading…";
+  activeBatches = [];
+  activeBatchIndex = 0;
+  fetch("/sales/batches/" + activeMedicine.id + "?unit_name=" + encodeURIComponent(unit.unit_name))
+    .then(function (r) { return r.json(); })
+    .then(function (batches) {
+      activeBatches = batches;
+      renderBatchToggle();
+    });
+}
+
+function renderBatchToggle() {
+  var toggle = document.getElementById("batch-toggle");
+  toggle.innerHTML = "";
+  if (activeBatches.length === 0) {
+    toggle.textContent = "No stock available for this medicine yet.";
+    document.getElementById("qty-confirm-btn").disabled = true;
+    return;
+  }
+  document.getElementById("qty-confirm-btn").disabled = false;
+  activeBatches.forEach(function (b, i) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-secondary" + (i === activeBatchIndex ? " selected" : "");
+    btn.textContent = "Expires " + b.expiry_date + " — " + b.max_qty + " available — Rs " + b.unit_price.toFixed(2);
+    btn.addEventListener("click", function () { activeBatchIndex = i; renderBatchToggle(); });
     toggle.appendChild(btn);
   });
 }
@@ -162,10 +231,12 @@ document.getElementById("qty-input").addEventListener("keydown", function (e) {
     e.preventDefault();
     activeUnitIndex = (activeUnitIndex + 1) % activeMedicine.units.length;
     renderUnitToggle();
+    loadBatchesForActiveUnit();
   } else if (e.key === "ArrowLeft") {
     e.preventDefault();
     activeUnitIndex = (activeUnitIndex - 1 + activeMedicine.units.length) % activeMedicine.units.length;
     renderUnitToggle();
+    loadBatchesForActiveUnit();
   } else if (e.key === "Enter") {
     e.preventDefault();
     confirmAddToBill();
@@ -181,10 +252,23 @@ function confirmAddToBill() {
     errorBox.style.display = "block";
     return;
   }
+  var batch = activeBatches[activeBatchIndex];
+  if (!batch) {
+    errorBox.textContent = "Select a batch to sell from.";
+    errorBox.style.display = "block";
+    return;
+  }
+  if (quantity > batch.max_qty) {
+    errorBox.textContent = "Only " + batch.max_qty + " available in this batch.";
+    errorBox.style.display = "block";
+    return;
+  }
   var unit = activeMedicine.units[activeUnitIndex];
   bill.push({
     medicine_id: activeMedicine.id, name: activeMedicine.name,
-    unit_name: unit.unit_name, price: unit.price, quantity: quantity,
+    unit_name: unit.unit_name, batch_id: batch.batch_id, expiry_date: batch.expiry_date,
+    gross_unit_price: batch.unit_price, max_discount_percent: activeMedicine.max_discount_percent,
+    quantity: quantity, discount_percent: 0,
   });
   renderBill();
   closeModal("qty-modal");
@@ -194,35 +278,106 @@ function confirmAddToBill() {
   searchInput.focus();
 }
 
+function lineSubtotal(item) {
+  var unitPrice = item.gross_unit_price * (1 - item.discount_percent / 100);
+  return unitPrice * item.quantity;
+}
+
+function billMaxDiscount() {
+  if (bill.length === 0) { return 0; }
+  return Math.min.apply(null, bill.map(function (i) { return i.max_discount_percent; }));
+}
+
+function showDiscountLimitModal(message) {
+  document.getElementById("discount-limit-message").textContent = message;
+  openModal("discount-limit-modal");
+}
+
+// Only touches the totals block + bill-discount-input's max, never the table body —
+// safe to call on every keystroke without destroying (and defocusing) row inputs.
+function recalcTotals() {
+  var subtotalBeforeDiscount = 0;
+  var total = 0;
+  bill.forEach(function (item) {
+    subtotalBeforeDiscount += item.gross_unit_price * item.quantity;
+    total += lineSubtotal(item);
+  });
+  document.getElementById("bill-subtotal").textContent = "Rs " + subtotalBeforeDiscount.toFixed(2);
+  document.getElementById("bill-discount-amount").textContent = "Rs " + (subtotalBeforeDiscount - total).toFixed(2);
+  document.getElementById("bill-total").textContent = "Rs " + total.toFixed(2);
+
+  var maxBillDiscount = billMaxDiscount();
+  document.getElementById("bill-discount-max").textContent = maxBillDiscount;
+  document.getElementById("bill-discount-input").max = String(maxBillDiscount);
+}
+
 function renderBill() {
   var tbody = document.querySelector("#bill-table tbody");
   tbody.innerHTML = "";
-  var total = 0;
+  var billDiscountInput = document.getElementById("bill-discount-input");
+  var billDiscountValue = discountMode === "bill" ? (parseFloat(billDiscountInput.value) || 0) : 0;
+
   bill.forEach(function (item, i) {
-    var subtotal = item.price * item.quantity;
-    total += subtotal;
+    if (discountMode === "bill") { item.discount_percent = billDiscountValue; }
+    else if (discountMode === "none") { item.discount_percent = 0; }
+
     var row = tbody.insertRow();
 
-    // Add cells with safe text content for user-controlled fields
     var nameCell = row.insertCell(0);
     nameCell.textContent = item.name;
 
     var unitCell = row.insertCell(1);
     unitCell.textContent = item.unit_name;
 
-    var qtyCell = row.insertCell(2);
+    var batchCell = row.insertCell(2);
+    batchCell.textContent = item.expiry_date;
+
+    var qtyCell = row.insertCell(3);
     qtyCell.className = "num";
     qtyCell.textContent = item.quantity;
 
-    var priceCell = row.insertCell(3);
+    var priceCell = row.insertCell(4);
     priceCell.className = "num";
-    priceCell.textContent = item.price.toFixed(2);
+    priceCell.textContent = item.gross_unit_price.toFixed(2);
 
-    var subtotalCell = row.insertCell(4);
+    var discountCell = row.insertCell(5);
+    discountCell.className = "num";
+
+    var subtotalCell = row.insertCell(6);
     subtotalCell.className = "num";
-    subtotalCell.textContent = subtotal.toFixed(2);
+    subtotalCell.textContent = lineSubtotal(item).toFixed(2);
 
-    var removeCell = row.insertCell(5);
+    if (discountMode === "item") {
+      var discountInput = document.createElement("input");
+      discountInput.type = "number";
+      discountInput.min = "0";
+      discountInput.max = String(item.max_discount_percent);
+      discountInput.step = "0.1";
+      discountInput.value = item.discount_percent;
+      discountInput.style.width = "70px";
+      // Updates only this row's subtotal cell + the totals block — never calls
+      // renderBill(), so this <input> is never recreated and never loses focus.
+      discountInput.addEventListener("input", function () {
+        var raw = parseFloat(discountInput.value);
+        if (isNaN(raw)) { raw = 0; }
+        if (raw > item.max_discount_percent) {
+          raw = item.max_discount_percent;
+          discountInput.value = raw;
+          showDiscountLimitModal("Max discount for " + item.name + " is " + item.max_discount_percent + "%.");
+        } else if (raw < 0) {
+          raw = 0;
+          discountInput.value = raw;
+        }
+        item.discount_percent = raw;
+        subtotalCell.textContent = lineSubtotal(item).toFixed(2);
+        recalcTotals();
+      });
+      discountCell.appendChild(discountInput);
+    } else {
+      discountCell.textContent = item.discount_percent.toFixed(1);
+    }
+
+    var removeCell = row.insertCell(7);
     var removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-icon";
@@ -230,19 +385,53 @@ function renderBill() {
     removeBtn.addEventListener("click", function () { bill.splice(i, 1); renderBill(); });
     removeCell.appendChild(removeBtn);
   });
-  document.getElementById("bill-total").textContent = "Rs " + total.toFixed(2);
+
+  document.getElementById("discount-col-head").style.display = discountMode === "none" ? "none" : "";
+  recalcTotals();
 }
+
+document.querySelectorAll("#discount-mode-toggle button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    discountMode = btn.dataset.mode;
+    document.querySelectorAll("#discount-mode-toggle button").forEach(function (b) {
+      b.classList.toggle("selected", b === btn);
+    });
+    document.getElementById("bill-discount-field").style.display = discountMode === "bill" ? "" : "none";
+    if (discountMode !== "bill") { document.getElementById("bill-discount-input").value = 0; }
+    bill.forEach(function (item) { item.discount_percent = 0; });
+    renderBill();
+  });
+});
+document.getElementById("bill-discount-input").addEventListener("input", function () {
+  var maxBillDiscount = billMaxDiscount();
+  var raw = parseFloat(this.value) || 0;
+  if (raw > maxBillDiscount) {
+    this.value = maxBillDiscount;
+    showDiscountLimitModal("Bill discount cannot exceed " + maxBillDiscount + "% (lowest max discount among items in this bill).");
+  } else if (raw < 0) {
+    this.value = 0;
+  }
+  renderBill();
+});
 
 function finalizeSale() {
   var errorBox = document.getElementById("bill-error");
   errorBox.style.display = "none";
   if (bill.length === 0) { return; }
+  var billDiscountValue = discountMode === "bill" ? (parseFloat(document.getElementById("bill-discount-input").value) || 0) : 0;
   fetch("/sales", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: bill.map(function (i) {
-      return { medicine_id: i.medicine_id, unit_name: i.unit_name, quantity: i.quantity };
-    }) }),
+    body: JSON.stringify({
+      discount_mode: discountMode,
+      bill_discount_percent: billDiscountValue,
+      items: bill.map(function (i) {
+        return {
+          medicine_id: i.medicine_id, unit_name: i.unit_name, batch_id: i.batch_id,
+          quantity: i.quantity, discount_percent: discountMode === "item" ? i.discount_percent : 0,
+        };
+      }),
+    }),
   })
     .then(function (r) { return r.json(); })
     .then(function (data) {
