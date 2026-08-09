@@ -4,7 +4,7 @@ echo Installing build dependencies...
 pip install -r requirements.txt pyinstaller
 echo.
 echo Building PharmacyInventory.exe...
-pyinstaller --onefile --noconsole --name PharmacyInventory ^
+python -m PyInstaller --onefile --noconsole --name PharmacyInventory ^
   --add-data "templates;templates" ^
   --add-data "static;static" ^
   --add-data "schema.sql;." ^
