@@ -137,6 +137,10 @@ a:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline
 .receipt table th:not(:last-child),
 .receipt table td:not(:last-child) { border-right:1px solid var(--border); }
 
+.signature-row { display:flex; gap:24px; margin-top:48px; flex-wrap:wrap; }
+.signature-line { flex:1; min-width:140px; border-top:1px solid var(--border); padding-top:8px; text-align:center; font-size:12px; color:var(--text-muted); }
+.report-footnote { font-size:12px; color:var(--text-muted); font-style:italic; margin-top:18px; }
+
 @media print {
   .sidebar, .topbar .who, .no-print { display:none; }
   .app { grid-template-columns:1fr; }

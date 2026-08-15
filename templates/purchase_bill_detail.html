@@ -3,17 +3,22 @@
 {% block page_desc %}From {{ bill['vendor_name'] }}, dated {{ bill['bill_date'] }}.{% endblock %}
 {% block content %}
 <div class="card panel">
-  <a href="{{ url_for('vendors.vendor_detail_view', vendor_id=bill['vendor_id']) }}">{{ bill['vendor_name'] }}</a>
-  {% if amount_due <= 0 %}
-  <span class="badge good">Paid</span>
-  {% elif total_paid > 0 %}
-  <span class="badge warn">Partial</span>
-  {% else %}
-  <span class="badge critical">Unpaid</span>
-  {% endif %}
-  {% if bill['vendor_bill_reference'] %}
-  <p class="panel-desc">Vendor bill reference: {{ bill['vendor_bill_reference'] }}</p>
-  {% endif %}
+  <div class="panel-head">
+    <div>
+      <a href="{{ url_for('vendors.vendor_detail_view', vendor_id=bill['vendor_id']) }}">{{ bill['vendor_name'] }}</a>
+      {% if amount_due <= 0 %}
+      <span class="badge good">Paid</span>
+      {% elif total_paid > 0 %}
+      <span class="badge warn">Partial</span>
+      {% else %}
+      <span class="badge critical">Unpaid</span>
+      {% endif %}
+      {% if bill['vendor_bill_reference'] %}
+      <p class="panel-desc">Vendor bill reference: {{ bill['vendor_bill_reference'] }}</p>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('purchases.purchase_report_view', purchase_bill_id=bill['id']) }}" class="btn btn-secondary">Purchase Report</a>
+  </div>
 
   <div class="stat-row" style="margin-top:14px">
     <div class="card stat-card">

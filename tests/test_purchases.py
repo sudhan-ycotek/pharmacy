@@ -25,12 +25,15 @@ from helpers import make_box_file_medicine
 
 
 def _cetamol_item(quantity=2, unit_name="Box",
-                   cost_price_original=1.0, cost_currency="NPR", mrp_per_base_unit=2.0,
-                   max_discount_percent=None):
+                   cost_price_original=1.0, cost_currency="NPR",
+                   mrp_original=2.0, mrp_currency="NPR",
+                   max_discount_percent=None, batch_number=None, expiry_date=None):
     return {
         "unit_name": unit_name, "quantity": quantity,
         "cost_price_original": cost_price_original, "cost_currency": cost_currency,
-        "mrp_per_base_unit": mrp_per_base_unit, "max_discount_percent": max_discount_percent,
+        "mrp_original": mrp_original, "mrp_currency": mrp_currency,
+        "max_discount_percent": max_discount_percent,
+        "batch_number": batch_number, "expiry_date": expiry_date,
     }
 
 
@@ -166,6 +169,76 @@ def test_create_purchase_bill_updates_max_discount_percent_when_given(app):
         assert get_medicine(medicine_id)["max_discount_percent"] == 15
 
 
+def test_create_purchase_bill_stores_batch_and_expiry(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+
+        create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(batch_number="B100", expiry_date="2027-01-01"), medicine_id=medicine_id),
+        ])
+
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["batch_number"] == "B100"
+        assert receipt["expiry_date"] == "2027-01-01"
+
+
+def test_create_purchase_bill_batch_and_expiry_are_optional(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+
+        create_purchase_bill(user_id, vendor_id, "2026-08-01", [dict(_cetamol_item(), medicine_id=medicine_id)])
+
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["batch_number"] is None
+        assert receipt["expiry_date"] is None
+
+
+def test_create_purchase_bill_converts_inr_mrp_and_keeps_original(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+
+        create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(mrp_original=10.0, mrp_currency="INR"), medicine_id=medicine_id),
+        ])
+
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["mrp_currency"] == "INR"
+        assert receipt["mrp_original"] == 10.0
+        assert receipt["mrp_per_base_unit"] == 16.0  # 10 INR * 1.60
+
+
+def test_create_purchase_bill_rejects_invalid_expiry_date_format(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        with pytest.raises(ValueError):
+            create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+                dict(_cetamol_item(expiry_date="not-a-date"), medicine_id=medicine_id),
+            ])
+
+
+def test_create_purchase_bill_rejects_invalid_expiry_atomically(app):
+    """A bad expiry on the 2nd item must not leave the 1st item's receipt committed."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        with pytest.raises(ValueError):
+            create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+                dict(_cetamol_item(), medicine_id=medicine_id),
+                dict(_cetamol_item(expiry_date="30-02-2027"), medicine_id=medicine_id),
+            ])
+        assert list_stock_receipts(medicine_id) == []
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 0
+
+
 # --- payments -------------------------------------------------------------
 
 def test_record_payment_reduces_amount_due(app):
@@ -232,6 +305,33 @@ def test_list_purchase_bills_reports_paid_and_due(app):
         assert len(bills) == 1
         assert bills[0]["total_paid"] == 100.0
         assert bills[0]["amount_due"] == result["total_amount"] - 100.0
+
+
+def test_list_purchase_bills_filters_by_date_range_across_vendors(app):
+    with app.app_context():
+        vendor1 = add_vendor("ABC Vendors")
+        vendor2 = add_vendor("XYZ Traders")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        create_purchase_bill(user_id, vendor1, "2026-08-01", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_bill(user_id, vendor2, "2026-08-10", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_bill(user_id, vendor1, "2026-08-15", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+
+        assert len(list_purchase_bills()) == 3
+
+        ranged = list_purchase_bills(date_from="2026-08-05", date_to="2026-08-12")
+        assert len(ranged) == 1
+        assert ranged[0]["vendor_id"] == vendor2
+
+        scoped = list_purchase_bills(vendor_id=vendor1, date_from="2026-08-05")
+        assert len(scoped) == 1
+        assert scoped[0]["bill_date"] == "2026-08-15"
 
 
 def test_vendor_balance_rolls_up_across_bills(app):
@@ -301,7 +401,7 @@ def test_create_purchase_return_reduces_stock_and_bill_total(app):
         medicine_id = make_box_file_medicine(name="Cetamol")
         user_id = _make_admin(app)
         result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
-            dict(_cetamol_item(quantity=5, cost_price_original=1.0, mrp_per_base_unit=2.0),
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0, mrp_original=2.0),
                  medicine_id=medicine_id),
         ])
         stock_before = get_medicine(medicine_id)["stock_in_base_units"]
@@ -395,6 +495,103 @@ def test_list_purchase_returns_includes_items(app):
         assert returns[0]["items"][0]["medicine_name"] == "Cetamol"
 
 
+def test_returnable_quantity_scoped_by_batch_when_bill_has_multiple_batches(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=3, cost_price_original=1.0, batch_number="B1"), medicine_id=medicine_id),
+            dict(_cetamol_item(quantity=4, cost_price_original=1.5, batch_number="B2"), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        # Omitting batch_number aggregates across every batch on the bill (backward compatible).
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box") == 7
+        # Scoping by batch_number, each batch's returnable is independent of the other.
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B1") == 3
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B2") == 4
+
+
+def test_create_purchase_return_scoped_by_batch_uses_that_batchs_cost(app):
+    """Two batches of the same medicine/unit on one bill, at different costs --
+    a batch-scoped return must net out against its own batch's cost and reduce
+    only that batch's returnable, leaving the other batch untouched."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=3, cost_price_original=1.0, batch_number="B1"), medicine_id=medicine_id),
+            dict(_cetamol_item(quantity=4, cost_price_original=2.0, batch_number="B2"), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        ret = create_purchase_return(
+            purchase_bill_id,
+            [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 2, "batch_number": "B2"}],
+            "damaged", user_id,
+        )
+        # 2 boxes from batch B2 = 480 base units at 2.0 NPR/base unit = 960.0 (not B1's 1.0 cost)
+        assert ret["total_amount"] == 960.0
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B1") == 3
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B2") == 2
+
+
+def test_create_purchase_return_handles_multiple_batches_in_one_call(app):
+    """One return submission covering both batches of a two-batch bill --
+    each item nets out against its own batch's cost and returnable."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=3, cost_price_original=1.0, batch_number="B1"), medicine_id=medicine_id),
+            dict(_cetamol_item(quantity=4, cost_price_original=2.0, batch_number="B2"), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        ret = create_purchase_return(
+            purchase_bill_id,
+            [
+                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1, "batch_number": "B1"},
+                {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 2, "batch_number": "B2"},
+            ],
+            "damaged", user_id,
+        )
+        # B1: 1 box * 240 base units * 1.0 = 240.0 ; B2: 2 boxes * 240 base units * 2.0 = 960.0
+        assert ret["total_amount"] == 1200.0
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B1") == 2
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B2") == 2
+
+
+def test_create_purchase_return_rejects_when_summed_rows_exceed_returnable(app):
+    """Two return rows for the same (medicine, unit, batch) key must be validated
+    against their combined total, not just individually -- each row alone (3) is
+    under the returnable amount (5), but their sum (6) is not."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        with pytest.raises(ValueError):
+            create_purchase_return(
+                purchase_bill_id,
+                [
+                    {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 3},
+                    {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 3},
+                ],
+                "damaged", user_id,
+            )
+        # Nothing written -- validation fails before the write pass begins.
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 5 * 240
+        assert get_purchase_bill(purchase_bill_id)["total_amount"] == result["total_amount"]
+
+
 def test_create_purchase_return_route_creates_return(admin_client, app):
     with app.app_context():
         vendor_id = add_vendor("ABC Vendors")
@@ -445,6 +642,16 @@ def test_new_purchase_bill_view_renders(admin_client, app):
     with app.app_context():
         add_vendor("ABC Vendors")
     resp = admin_client.get("/purchases/new")
+    assert resp.status_code == 200
+    # Vendor picker is AJAX-based now (GET /vendors/search) -- no preloaded <option> list.
+    assert b"vendor-search-input" in resp.data
+    assert b"ABC Vendors" not in resp.data
+
+
+def test_new_purchase_bill_view_preselects_vendor_from_query_param(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+    resp = admin_client.get(f"/purchases/new?vendor_id={vendor_id}")
     assert resp.status_code == 200
     assert b"ABC Vendors" in resp.data
 
@@ -527,3 +734,100 @@ def test_add_payment_view_records_payment_and_redirects(admin_client, app):
     assert resp.status_code == 302
     with app.app_context():
         assert bill_total_paid(purchase_bill_id) == 100.0
+
+
+# --- Purchase Book -----------------------------------------------------------
+
+def test_purchase_book_view_requires_admin(staff_client):
+    resp = staff_client.get("/purchases")
+    assert resp.status_code == 403
+
+
+def test_purchase_book_view_renders_bills_across_vendors(admin_client, app):
+    with app.app_context():
+        vendor1 = add_vendor("ABC Vendors")
+        vendor2 = add_vendor("XYZ Traders")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        create_purchase_bill(user_id, vendor1, "2026-08-01", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_bill(user_id, vendor2, "2026-08-05", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+    resp = admin_client.get("/purchases")
+    assert resp.status_code == 200
+    assert b"ABC Vendors" in resp.data
+    assert b"XYZ Traders" in resp.data
+
+
+def test_purchase_book_view_filters_by_date_range(admin_client, app):
+    with app.app_context():
+        vendor1 = add_vendor("ABC Vendors")
+        vendor2 = add_vendor("XYZ Traders")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        create_purchase_bill(user_id, vendor1, "2026-08-01", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_bill(user_id, vendor2, "2026-08-10", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+    resp = admin_client.get("/purchases?date_from=2026-08-05&date_to=2026-08-15")
+    assert resp.status_code == 200
+    # The supplier filter <select> always lists every vendor as an <option>, so a
+    # filtered-out vendor still appears once there -- but only the matching
+    # vendor's name appears a second time, inside its bill's table row.
+    assert resp.data.count(b"XYZ Traders") == 2
+    assert resp.data.count(b"ABC Vendors") == 1
+
+
+def test_purchase_book_view_filters_by_vendor(admin_client, app):
+    with app.app_context():
+        vendor1 = add_vendor("ABC Vendors")
+        vendor2 = add_vendor("XYZ Traders")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        create_purchase_bill(user_id, vendor1, "2026-08-01", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_bill(user_id, vendor2, "2026-08-05", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+    resp = admin_client.get(f"/purchases?vendor_id={vendor1}")
+    assert resp.status_code == 200
+    # Same reasoning as the date-range test: the supplier <select> lists every
+    # vendor once regardless of the filter; only the matching vendor's name
+    # appears a second time, inside its bill's table row.
+    assert resp.data.count(b"ABC Vendors") == 2
+    assert resp.data.count(b"XYZ Traders") == 1
+
+
+# --- Purchase Report -----------------------------------------------------------
+
+def test_purchase_report_view_requires_admin(staff_client):
+    resp = staff_client.get("/purchases/1/report")
+    assert resp.status_code == 403
+
+
+def test_purchase_report_view_renders(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=1, cost_price_original=1.0, batch_number="B1",
+                                expiry_date="2027-01-01"), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+    resp = admin_client.get(f"/purchases/{purchase_bill_id}/report")
+    assert resp.status_code == 200
+    assert b"Cetamol" in resp.data
+    assert b"B1" in resp.data
+    assert b"2027-01-01" in resp.data
+    assert b"ABC Vendors" in resp.data
+
+
+def test_purchase_report_view_404_for_unknown(admin_client):
+    resp = admin_client.get("/purchases/999/report")
+    assert resp.status_code == 404

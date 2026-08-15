@@ -3,16 +3,20 @@
 {% block page_desc %}Track vendors, their purchase history, and outstanding balance.{% endblock %}
 {% block content %}
 <div class="panel-head" style="margin-bottom:14px">
-  <div></div>
+  <form method="get" class="search-box" style="max-width:320px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    <input type="text" name="q" placeholder="Search by name or code…" autocomplete="off" value="{{ q }}">
+  </form>
   <button type="button" class="btn btn-primary" onclick="openModal('add-vendor-modal')">+ Add Vendor</button>
 </div>
 <div class="card panel">
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Vendor</th><th>Phone</th><th>Address</th><th class="num">Total Billed</th><th>Balance</th><th></th></tr></thead>
+      <thead><tr><th>Code</th><th>Vendor</th><th>Phone</th><th>Address</th><th class="num">Total Billed</th><th>Balance</th><th></th></tr></thead>
       <tbody>
       {% for v in vendors %}
       <tr>
+        <td>{{ v['code'] or '—' }}</td>
         <td><div class="med-name">{{ v['name'] }}</div></td>
         <td>{{ v['phone'] or '—' }}</td>
         <td>{{ v['address'] or '—' }}</td>
@@ -31,7 +35,7 @@
     </table>
   </div>
   {% if not vendors %}
-  <p class="panel-desc">No vendors yet.</p>
+  <p class="panel-desc">{{ "No vendors match this search." if q else "No vendors yet." }}</p>
   {% endif %}
 </div>
 

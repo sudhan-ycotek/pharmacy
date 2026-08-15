@@ -6,12 +6,13 @@
   <div class="field-row">
     <div class="field">
       <label>Vendor</label>
-      <select id="vendor-select">
-        <option value="">Select a vendor…</option>
-        {% for v in vendors %}
-        <option value="{{ v['id'] }}" {{ "selected" if preselected_vendor_id == v['id'] }}>{{ v['name'] }}</option>
-        {% endfor %}
-      </select>
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input type="text" id="vendor-search-input" placeholder="Search vendor by name or code…" autocomplete="off"
+               value="{{ preselected_vendor['name'] if preselected_vendor }}">
+      </div>
+      <input type="hidden" id="vendor-id-input" value="{{ preselected_vendor['id'] if preselected_vendor else '' }}">
+      <div id="vendor-search-results" class="search-results"></div>
     </div>
     <div class="field">
       <label>&nbsp;</label>
@@ -47,7 +48,7 @@
 
   <div class="table-scroll">
     <table id="items-table">
-      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">MRP</th><th class="num">Max Discount %</th><th class="num">Line Total</th><th></th></tr></thead>
+      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th>Batch</th><th>Expiry</th><th class="num">Cost</th><th class="num">MRP</th><th class="num">Max Discount %</th><th class="num">Line Total</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -116,7 +117,22 @@
       </div>
       <div class="field">
         <label>MRP per <span id="item-mrp-unit-label">unit</span></label>
+        <div class="unit-toggle" id="item-mrp-currency-toggle">
+          <button type="button" class="btn btn-secondary selected" data-currency="NPR">NPR</button>
+          <button type="button" class="btn btn-secondary" data-currency="INR">INR</button>
+        </div>
         <input type="number" id="item-mrp-input" min="0" step="0.01">
+        <p class="form-preview" id="item-mrp-preview" style="display:none"></p>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Batch number (optional)</label>
+        <input type="text" id="item-batch-input">
+      </div>
+      <div class="field">
+        <label>Expiry date (optional)</label>
+        <input type="date" id="item-expiry-input">
       </div>
     </div>
     <div class="field">
@@ -133,15 +149,70 @@
 {% block scripts %}
 <script>
 var INR_TO_NPR_RATE = 1.60;
-var vendorSelect = document.getElementById("vendor-select");
+var vendorIdInput = document.getElementById("vendor-id-input");
+var vendorSearchInput = document.getElementById("vendor-search-input");
+var vendorResultsBox = document.getElementById("vendor-search-results");
+var vendorResults = [];
+var vendorHighlightedIndex = -1;
 var items = [];
 var currentResults = [];
 var highlightedIndex = -1;
 var activeMedicine = null;
 var activeUnitIndex = 0;
 var activeCurrency = "NPR";
+var activeMrpCurrency = "NPR";
 
 function displayUnitName(name) { return name === "File" ? "Strip" : name; }
+
+function renderVendorResults() {
+  vendorResultsBox.innerHTML = "";
+  vendorResults.forEach(function (v, i) {
+    var row = document.createElement("div");
+    row.className = "search-result" + (i === vendorHighlightedIndex ? " highlighted" : "");
+    var nameDiv = document.createElement("div");
+    nameDiv.className = "med-name";
+    nameDiv.textContent = v.name + (v.code ? " (" + v.code + ")" : "");
+    row.appendChild(nameDiv);
+    row.addEventListener("click", function () { selectVendor(i); });
+    vendorResultsBox.appendChild(row);
+  });
+}
+
+function selectVendor(index) {
+  var v = vendorResults[index];
+  if (!v) { return; }
+  vendorIdInput.value = v.id;
+  vendorSearchInput.value = v.name;
+  vendorResults = [];
+  renderVendorResults();
+}
+
+vendorSearchInput.addEventListener("input", function (e) {
+  vendorIdInput.value = "";
+  var q = e.target.value;
+  vendorHighlightedIndex = -1;
+  if (!q) { vendorResults = []; renderVendorResults(); return; }
+  fetch("/vendors/search?q=" + encodeURIComponent(q))
+    .then(function (r) { return r.json(); })
+    .then(function (vendors) {
+      vendorResults = vendors;
+      vendorHighlightedIndex = vendorResults.length ? 0 : -1;
+      renderVendorResults();
+    });
+});
+
+vendorSearchInput.addEventListener("keydown", function (e) {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (vendorResults.length) { vendorHighlightedIndex = Math.min(vendorHighlightedIndex + 1, vendorResults.length - 1); renderVendorResults(); }
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (vendorResults.length) { vendorHighlightedIndex = Math.max(vendorHighlightedIndex - 1, 0); renderVendorResults(); }
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (vendorHighlightedIndex >= 0) { selectVendor(vendorHighlightedIndex); }
+  }
+});
 
 var searchInput = document.getElementById("search-box");
 var resultsBox = document.getElementById("search-results");
@@ -166,18 +237,25 @@ function selectMedicine(index) {
   activeMedicine = currentResults[index];
   activeUnitIndex = 0;
   activeCurrency = "NPR";
+  activeMrpCurrency = "NPR";
   if (!activeMedicine || activeMedicine.units.length === 0) { return; }
   document.getElementById("item-modal-title").textContent = "Add " + activeMedicine.name;
   document.getElementById("item-modal-error").style.display = "none";
   document.getElementById("item-qty-input").value = 1;
   document.getElementById("item-cost-input").value = "";
   document.getElementById("item-mrp-input").value = "";
+  document.getElementById("item-batch-input").value = "";
+  document.getElementById("item-expiry-input").value = "";
   document.getElementById("item-max-discount-input").value = activeMedicine.max_discount_percent;
   document.querySelectorAll("#item-currency-toggle button").forEach(function (b) {
     b.classList.toggle("selected", b.dataset.currency === "NPR");
   });
+  document.querySelectorAll("#item-mrp-currency-toggle button").forEach(function (b) {
+    b.classList.toggle("selected", b.dataset.currency === "NPR");
+  });
   renderUnitToggle();
   updateCostPreview();
+  updateMrpPreview();
   openModal("item-modal");
   document.getElementById("item-qty-input").focus();
 }
@@ -220,6 +298,27 @@ document.querySelectorAll("#item-currency-toggle button").forEach(function (btn)
       b.classList.toggle("selected", b === btn);
     });
     updateCostPreview();
+  });
+});
+
+function updateMrpPreview() {
+  var preview = document.getElementById("item-mrp-preview");
+  var value = parseFloat(document.getElementById("item-mrp-input").value);
+  if (activeMrpCurrency === "INR" && value) {
+    preview.style.display = "block";
+    preview.textContent = "= Rs " + (value * INR_TO_NPR_RATE).toFixed(2) + " NPR";
+  } else {
+    preview.style.display = "none";
+  }
+}
+document.getElementById("item-mrp-input").addEventListener("input", updateMrpPreview);
+document.querySelectorAll("#item-mrp-currency-toggle button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    activeMrpCurrency = btn.dataset.currency;
+    document.querySelectorAll("#item-mrp-currency-toggle button").forEach(function (b) {
+      b.classList.toggle("selected", b === btn);
+    });
+    updateMrpPreview();
   });
 });
 
@@ -270,6 +369,8 @@ function confirmAddItem() {
   var costPrice = parseFloat(document.getElementById("item-cost-input").value);
   var mrp = parseFloat(document.getElementById("item-mrp-input").value);
   var maxDiscountPercent = parseFloat(document.getElementById("item-max-discount-input").value);
+  var batchNumber = document.getElementById("item-batch-input").value.trim() || null;
+  var expiryDate = document.getElementById("item-expiry-input").value || null;
   if (!quantity || quantity <= 0 || isNaN(costPrice) || isNaN(mrp)) {
     errorBox.textContent = "Fill in quantity, cost, and MRP.";
     errorBox.style.display = "block";
@@ -280,7 +381,10 @@ function confirmAddItem() {
     medicine_id: activeMedicine.id, name: activeMedicine.name, unit_name: unit.unit_name,
     quantity: quantity, cost_price_original: costPrice,
     cost_currency: activeCurrency, cost_price_per_base_unit: activeCurrency === "INR" ? costPrice * INR_TO_NPR_RATE : costPrice,
-    mrp_per_base_unit: mrp, max_discount_percent: isNaN(maxDiscountPercent) ? null : maxDiscountPercent,
+    mrp_original: mrp, mrp_currency: activeMrpCurrency,
+    mrp_per_base_unit: activeMrpCurrency === "INR" ? mrp * INR_TO_NPR_RATE : mrp,
+    max_discount_percent: isNaN(maxDiscountPercent) ? null : maxDiscountPercent,
+    batch_number: batchNumber, expiry_date: expiryDate,
   });
   renderItems();
   closeModal("item-modal");
@@ -303,18 +407,23 @@ function renderItems() {
     row.insertCell(1).textContent = displayUnitName(item.unit_name);
     row.insertCell(2).className = "num";
     row.cells[2].textContent = item.quantity;
-    var costCell = row.insertCell(3);
+    row.insertCell(3).textContent = item.batch_number || "—";
+    row.insertCell(4).textContent = item.expiry_date || "—";
+    var costCell = row.insertCell(5);
     costCell.className = "num";
     costCell.textContent = item.cost_currency === "INR"
       ? "₹" + item.cost_price_original.toFixed(2) + " (Rs " + item.cost_price_per_base_unit.toFixed(2) + ")"
       : "Rs " + item.cost_price_original.toFixed(2);
-    row.insertCell(4).className = "num";
-    row.cells[4].textContent = item.mrp_per_base_unit.toFixed(2);
-    row.insertCell(5).className = "num";
-    row.cells[5].textContent = item.max_discount_percent === null ? "—" : item.max_discount_percent;
-    row.insertCell(6).className = "num";
-    row.cells[6].textContent = lineTotal.toFixed(2);
-    var removeCell = row.insertCell(7);
+    var mrpCell = row.insertCell(6);
+    mrpCell.className = "num";
+    mrpCell.textContent = item.mrp_currency === "INR"
+      ? "₹" + item.mrp_original.toFixed(2) + " (Rs " + item.mrp_per_base_unit.toFixed(2) + ")"
+      : "Rs " + item.mrp_original.toFixed(2);
+    row.insertCell(7).className = "num";
+    row.cells[7].textContent = item.max_discount_percent === null ? "—" : item.max_discount_percent;
+    row.insertCell(8).className = "num";
+    row.cells[8].textContent = lineTotal.toFixed(2);
+    var removeCell = row.insertCell(9);
     var removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-icon";
@@ -345,11 +454,10 @@ function submitNewVendor() {
         errorBox.innerHTML = '<div class="banner-error">' + data.error + '</div>';
         return;
       }
-      var opt = document.createElement("option");
-      opt.value = data.id;
-      opt.textContent = data.name;
-      vendorSelect.appendChild(opt);
-      vendorSelect.value = data.id;
+      vendorIdInput.value = data.id;
+      vendorSearchInput.value = data.name;
+      vendorResults = [];
+      renderVendorResults();
       closeModal("new-vendor-modal");
     });
 }
@@ -357,7 +465,7 @@ function submitNewVendor() {
 function finalizeBill() {
   var errorBox = document.getElementById("bill-error");
   errorBox.style.display = "none";
-  if (!vendorSelect.value) {
+  if (!vendorIdInput.value) {
     errorBox.textContent = "Select or add a vendor.";
     errorBox.style.display = "block";
     return;
@@ -368,7 +476,7 @@ function finalizeBill() {
     return;
   }
   var formData = new FormData();
-  formData.append("vendor_id", vendorSelect.value);
+  formData.append("vendor_id", vendorIdInput.value);
   formData.append("bill_date", document.getElementById("bill-date-input").value);
   formData.append("vendor_bill_reference", document.getElementById("bill-reference-input").value);
   var paidAmount = document.getElementById("paid-amount-input").value;
@@ -378,9 +486,10 @@ function finalizeBill() {
   formData.append("items_json", JSON.stringify(items.map(function (i) {
     return {
       medicine_id: i.medicine_id, unit_name: i.unit_name, quantity: i.quantity,
-      cost_price_original: i.cost_price_original,
-      cost_currency: i.cost_currency, mrp_per_base_unit: i.mrp_per_base_unit,
+      cost_price_original: i.cost_price_original, cost_currency: i.cost_currency,
+      mrp_original: i.mrp_original, mrp_currency: i.mrp_currency,
       max_discount_percent: i.max_discount_percent,
+      batch_number: i.batch_number, expiry_date: i.expiry_date,
     };
   })));
 

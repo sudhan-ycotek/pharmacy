@@ -33,6 +33,22 @@ def _parse_bill_date(value):
     return parsed.isoformat()
 
 
+def _parse_expiry_date(value):
+    """Normalize an optional per-item expiry date, or raise if given but malformed.
+
+    Validated here (in create_purchase_bill's validation pass, before any writes)
+    as well as inside _apply_stock_receipt itself -- the same belt-and-suspenders
+    approach bill_date already gets, so a bad expiry on item 2 of a multi-item
+    bill can't leave item 1's stock receipt partially committed.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return datetime.date.fromisoformat(value).isoformat()
+    except (ValueError, TypeError):
+        raise ValueError("expiry date must be in YYYY-MM-DD format")
+
+
 def _valid_percent(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 100
 
@@ -78,8 +94,11 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
         quantity = item["quantity"]
         cost_currency = item.get("cost_currency", "NPR")
         cost_price_original = item["cost_price_original"]
-        mrp_per_base_unit = item["mrp_per_base_unit"]
+        mrp_currency = item.get("mrp_currency", "NPR")
+        mrp_original = item["mrp_original"]
         max_discount_percent = item.get("max_discount_percent")
+        batch_number = (item.get("batch_number") or "").strip() or None
+        expiry_date = _parse_expiry_date(item.get("expiry_date"))
 
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive whole number")
@@ -94,6 +113,7 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
             raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
 
         cost_price_per_base_unit = convert_to_npr(cost_price_original, cost_currency)
+        mrp_per_base_unit = convert_to_npr(mrp_original, mrp_currency)
         base_units = unit_row["qty_in_base_units"] * quantity
         computed_total += round(cost_price_per_base_unit * base_units, 2)
         prepared.append({
@@ -101,7 +121,12 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
             "cost_currency": cost_currency,
             "cost_price_original": cost_price_original,
             "cost_price_per_base_unit": cost_price_per_base_unit,
-            "mrp_per_base_unit": mrp_per_base_unit, "max_discount_percent": max_discount_percent,
+            "mrp_currency": mrp_currency,
+            "mrp_original": mrp_original,
+            "mrp_per_base_unit": mrp_per_base_unit,
+            "max_discount_percent": max_discount_percent,
+            "batch_number": batch_number,
+            "expiry_date": expiry_date,
         })
 
     bill_total = round(computed_total, 2)
@@ -127,6 +152,8 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
             p["cost_price_per_base_unit"], p["mrp_per_base_unit"],
             purchase_bill_id=purchase_bill_id, cost_currency=p["cost_currency"],
             cost_price_original=round(p["cost_price_original"], 2),
+            mrp_currency=p["mrp_currency"], mrp_original=round(p["mrp_original"], 2),
+            batch_number=p["batch_number"], expiry_date=p["expiry_date"],
         )
         if p["max_discount_percent"] is not None:
             update_max_discount(p["medicine_id"], p["max_discount_percent"])
@@ -175,10 +202,15 @@ def bill_amount_due(purchase_bill_id):
     return round(bill["total_amount"] - bill_total_paid(purchase_bill_id), 2)
 
 
-def list_purchase_bills(vendor_id):
+def list_purchase_bills(vendor_id=None, date_from=None, date_to=None):
+    """List purchase bills, optionally scoped by vendor and/or a bill_date range.
+
+    All three filters are optional and independent -- called with just a
+    vendor_id (the existing vendor-detail-page call site) it behaves exactly
+    as before; called with none of them, it's the cross-vendor Purchase Book.
+    """
     db = get_db()
-    return db.execute(
-        """
+    query = """
         SELECT pb.*, v.name AS vendor_name, u.username AS recorded_by_username,
                COALESCE(payments.total_paid, 0) AS total_paid,
                pb.total_amount - COALESCE(payments.total_paid, 0) AS amount_due
@@ -188,11 +220,22 @@ def list_purchase_bills(vendor_id):
         LEFT JOIN (SELECT purchase_bill_id, SUM(amount) AS total_paid
                    FROM purchase_payments GROUP BY purchase_bill_id) payments
           ON payments.purchase_bill_id = pb.id
-        WHERE pb.vendor_id = ?
-        ORDER BY pb.bill_date DESC, pb.id DESC
-        """,
-        (vendor_id,),
-    ).fetchall()
+    """
+    conditions = []
+    params = []
+    if vendor_id is not None:
+        conditions.append("pb.vendor_id = ?")
+        params.append(vendor_id)
+    if date_from:
+        conditions.append("pb.bill_date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("pb.bill_date <= ?")
+        params.append(date_to)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY pb.bill_date DESC, pb.id DESC"
+    return db.execute(query, params).fetchall()
 
 
 def vendor_balance(vendor_id):
@@ -255,22 +298,43 @@ def search_medicines_for_purchase(query):
 
 # --- purchase returns -------------------------------------------------------
 
-def returnable_quantity(purchase_bill_id, medicine_id, unit_name):
+def returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=None):
     """How many units of this bill's medicine/unit line are still eligible to
     return -- what was received on this bill, minus what's already been
-    returned (and not voided) against it."""
+    returned (and not voided) against it.
+
+    When batch_number is omitted, this aggregates across every batch of this
+    medicine/unit on the bill -- the original, backward-compatible behavior.
+    Passing batch_number scopes both the received and returned sums to that
+    one batch, so two batches of the same medicine on one bill return
+    independently of each other.
+    """
     db = get_db()
-    received = db.execute(
-        "SELECT COALESCE(SUM(quantity), 0) AS q FROM stock_receipts "
-        "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ?",
-        (purchase_bill_id, medicine_id, unit_name),
-    ).fetchone()["q"]
-    returned = db.execute(
-        "SELECT COALESCE(SUM(pri.quantity), 0) AS q FROM purchase_return_items pri "
-        "JOIN purchase_returns pr ON pr.id = pri.purchase_return_id "
-        "WHERE pr.purchase_bill_id = ? AND pri.medicine_id = ? AND pri.unit_name = ? AND pr.voided = 0",
-        (purchase_bill_id, medicine_id, unit_name),
-    ).fetchone()["q"]
+    if batch_number is not None:
+        received = db.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS q FROM stock_receipts "
+            "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ? AND batch_number = ?",
+            (purchase_bill_id, medicine_id, unit_name, batch_number),
+        ).fetchone()["q"]
+        returned = db.execute(
+            "SELECT COALESCE(SUM(pri.quantity), 0) AS q FROM purchase_return_items pri "
+            "JOIN purchase_returns pr ON pr.id = pri.purchase_return_id "
+            "WHERE pr.purchase_bill_id = ? AND pri.medicine_id = ? AND pri.unit_name = ? "
+            "AND pri.batch_number = ? AND pr.voided = 0",
+            (purchase_bill_id, medicine_id, unit_name, batch_number),
+        ).fetchone()["q"]
+    else:
+        received = db.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS q FROM stock_receipts "
+            "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ?",
+            (purchase_bill_id, medicine_id, unit_name),
+        ).fetchone()["q"]
+        returned = db.execute(
+            "SELECT COALESCE(SUM(pri.quantity), 0) AS q FROM purchase_return_items pri "
+            "JOIN purchase_returns pr ON pr.id = pri.purchase_return_id "
+            "WHERE pr.purchase_bill_id = ? AND pri.medicine_id = ? AND pri.unit_name = ? AND pr.voided = 0",
+            (purchase_bill_id, medicine_id, unit_name),
+        ).fetchone()["q"]
     return received - returned
 
 
@@ -288,10 +352,12 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
     # --- validation pass ---
     prepared = []
     computed_total = 0.0
+    requested_totals = {}  # (medicine_id, unit_name, batch_number) -> cumulative requested qty
     for item in items:
         medicine_id = item["medicine_id"]
         unit_name = item["unit_name"]
         quantity = item["quantity"]
+        batch_number = item.get("batch_number")
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
             raise ValueError("quantity must be a positive whole number")
 
@@ -302,8 +368,14 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
         if unit_row is None:
             raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
 
-        max_returnable = returnable_quantity(purchase_bill_id, medicine_id, unit_name)
-        if quantity > max_returnable:
+        # Sum requested quantities across every submitted item sharing this same
+        # (medicine, unit, batch) key -- not just this row -- so two return rows
+        # for the same line item can't each individually pass the returnable
+        # check while their combined total exceeds it.
+        key = (medicine_id, unit_name, batch_number)
+        requested_totals[key] = requested_totals.get(key, 0) + quantity
+        max_returnable = returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=batch_number)
+        if requested_totals[key] > max_returnable:
             raise ValueError(f"cannot return more than {max_returnable} of this item on this bill")
 
         medicine = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()
@@ -311,12 +383,20 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
         if medicine["stock_in_base_units"] < base_units:
             raise ValueError(f"cannot return more {medicine['name']} than is currently in stock")
 
-        cost_row = db.execute(
-            "SELECT cost_price_per_base_unit FROM stock_receipts "
-            "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ? "
-            "ORDER BY id DESC LIMIT 1",
-            (purchase_bill_id, medicine_id, unit_name),
-        ).fetchone()
+        if batch_number is not None:
+            cost_row = db.execute(
+                "SELECT cost_price_per_base_unit FROM stock_receipts "
+                "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ? AND batch_number = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (purchase_bill_id, medicine_id, unit_name, batch_number),
+            ).fetchone()
+        else:
+            cost_row = db.execute(
+                "SELECT cost_price_per_base_unit FROM stock_receipts "
+                "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (purchase_bill_id, medicine_id, unit_name),
+            ).fetchone()
         cost_price_per_base_unit = cost_row["cost_price_per_base_unit"]
         amount = round(cost_price_per_base_unit * base_units, 2)
         computed_total += amount
@@ -324,6 +404,7 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
             "medicine_id": medicine_id, "unit_name": unit_name, "quantity": quantity,
             "qty_in_base_units": unit_row["qty_in_base_units"], "base_units": base_units,
             "cost_price_per_base_unit": cost_price_per_base_unit, "amount": amount,
+            "batch_number": batch_number,
         })
 
     total_amount = round(computed_total, 2)
@@ -338,10 +419,10 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
     for p in prepared:
         db.execute(
             "INSERT INTO purchase_return_items (purchase_return_id, medicine_id, unit_name, quantity, "
-            "qty_in_base_units, base_units_returned, cost_price_per_base_unit, amount) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "qty_in_base_units, base_units_returned, cost_price_per_base_unit, amount, batch_number) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (return_id, p["medicine_id"], p["unit_name"], p["quantity"], p["qty_in_base_units"],
-             p["base_units"], p["cost_price_per_base_unit"], p["amount"]),
+             p["base_units"], p["cost_price_per_base_unit"], p["amount"], p["batch_number"]),
         )
         db.execute(
             "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
@@ -396,15 +477,29 @@ def list_purchase_returns(purchase_bill_id):
     return result
 
 
+@bp.route("", methods=["GET"])
+@role_required("admin")
+def purchase_book_view():
+    from vendors import list_vendors
+
+    vendor_id = request.args.get("vendor_id", type=int)
+    date_from = request.args.get("date_from") or None
+    date_to = request.args.get("date_to") or None
+    bills = list_purchase_bills(vendor_id=vendor_id, date_from=date_from, date_to=date_to)
+    return render_template(
+        "purchase_book.html", bills=bills, vendors=list_vendors(),
+        vendor_id=vendor_id, date_from=date_from, date_to=date_to,
+    )
+
+
 @bp.route("/new")
 @role_required("admin")
 def new_purchase_bill_view():
-    from vendors import list_vendors
+    from vendors import get_vendor
 
     preselected_vendor_id = request.args.get("vendor_id", type=int)
-    return render_template(
-        "purchase_bill_new.html", vendors=list_vendors(), preselected_vendor_id=preselected_vendor_id
-    )
+    preselected_vendor = get_vendor(preselected_vendor_id) if preselected_vendor_id else None
+    return render_template("purchase_bill_new.html", preselected_vendor=preselected_vendor)
 
 
 @bp.route("/medicines/search")
@@ -458,6 +553,20 @@ def purchase_bill_detail_view(purchase_bill_id):
     )
 
 
+@bp.route("/<int:purchase_bill_id>/report")
+@role_required("admin")
+def purchase_report_view(purchase_bill_id):
+    bill = get_purchase_bill(purchase_bill_id)
+    if bill is None:
+        return "Purchase bill not found", 404
+    return render_template(
+        "purchase_report.html", bill=bill,
+        stock_receipts=list_stock_receipts_for_bill(purchase_bill_id),
+        total_paid=bill_total_paid(purchase_bill_id),
+        amount_due=bill_amount_due(purchase_bill_id),
+    )
+
+
 @bp.route("/<int:purchase_bill_id>/payments", methods=["POST"])
 @role_required("admin")
 def add_payment_view(purchase_bill_id):
@@ -478,7 +587,10 @@ def add_payment_view(purchase_bill_id):
 def returnable_quantity_view(purchase_bill_id):
     medicine_id = request.args.get("medicine_id", type=int)
     unit_name = request.args.get("unit_name", "")
-    return jsonify({"returnable": returnable_quantity(purchase_bill_id, medicine_id, unit_name)})
+    batch_number = request.args.get("batch_number") or None
+    return jsonify({
+        "returnable": returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=batch_number)
+    })
 
 
 @bp.route("/<int:purchase_bill_id>/returns", methods=["POST"])

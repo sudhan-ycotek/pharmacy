@@ -143,7 +143,7 @@ def test_list_stock_receipts_shows_vendor_name_for_purchase_bill_receipts(app):
         user_id = create_user("admin1", "pw", "admin")
         create_purchase_bill(user_id, vendor_id, "2026-08-01", [{
             "medicine_id": medicine_id, "unit_name": "Box", "quantity": 1,
-            "cost_price_original": 1.0, "cost_currency": "NPR", "mrp_per_base_unit": 2.0,
+            "cost_price_original": 1.0, "cost_currency": "NPR", "mrp_original": 2.0,
         }])
         receipt = list_stock_receipts(medicine_id)[0]
         assert receipt["vendor_name"] == "ABC Vendors"

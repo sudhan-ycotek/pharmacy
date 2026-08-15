@@ -1,3 +1,5 @@
+import datetime
+
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
 from auth import current_user, role_required
@@ -192,7 +194,8 @@ def search_medicines(query):
 
 def _apply_stock_receipt(db, medicine_id, unit_name, quantity, cost_price_per_base_unit,
                           mrp_per_base_unit, purchase_bill_id=None, cost_currency="NPR",
-                          cost_price_original=None):
+                          cost_price_original=None, mrp_currency="NPR", mrp_original=None,
+                          batch_number=None, expiry_date=None):
     """Validate and INSERT one new stock_receipts row, bumping medicines.stock_in_base_units
     and overwriting its current cost/MRP (last price wins).
 
@@ -208,6 +211,11 @@ def _apply_stock_receipt(db, medicine_id, unit_name, quantity, cost_price_per_ba
         raise ValueError("cost price must be a non-negative number")
     if not _non_negative_price(mrp_per_base_unit):
         raise ValueError("MRP must be a non-negative number")
+    if expiry_date is not None:
+        try:
+            datetime.date.fromisoformat(expiry_date)
+        except (ValueError, TypeError):
+            raise ValueError("expiry date must be in YYYY-MM-DD format")
 
     unit_row = db.execute(
         "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
@@ -221,18 +229,21 @@ def _apply_stock_receipt(db, medicine_id, unit_name, quantity, cost_price_per_ba
     mrp_per_base_unit = round(mrp_per_base_unit, 2)
     if cost_price_original is None:
         cost_price_original = cost_price_per_base_unit
+    if mrp_original is None:
+        mrp_original = mrp_per_base_unit
+    batch_number = (batch_number or "").strip() or None
 
     cur = db.execute(
         """
         INSERT INTO stock_receipts
             (medicine_id, unit_name, quantity, qty_in_base_units, base_units_received,
              cost_currency, cost_price_original, cost_price_per_base_unit, mrp_per_base_unit,
-             purchase_bill_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             purchase_bill_id, batch_number, expiry_date, mrp_currency, mrp_original)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (medicine_id, unit_name, quantity, unit_row["qty_in_base_units"], base_units_received,
          cost_currency, round(cost_price_original, 2), cost_price_per_base_unit, mrp_per_base_unit,
-         purchase_bill_id),
+         purchase_bill_id, batch_number, expiry_date, mrp_currency, round(mrp_original, 2)),
     )
     db.execute(
         "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ?, "

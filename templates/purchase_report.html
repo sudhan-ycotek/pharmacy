@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block page_title %}Purchase Report — Bill #{{ bill['id'] }}{% endblock %}
+{% block page_desc %}Printable material receipt for the purchase from {{ bill['vendor_name'] }}.{% endblock %}
+{% block content %}
+<div class="card panel receipt" style="max-width:900px; margin:0 auto">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px">
+    <div>
+      <h2 style="margin:0 0 4px">Material Receipt</h2>
+      <p class="panel-desc">Bill #{{ bill['id'] }} · Dated {{ bill['bill_date'] }}</p>
+    </div>
+    <div style="text-align:right">
+      <div class="med-name">{{ bill['vendor_name'] }}</div>
+      {% if bill['vendor_bill_reference'] %}<div class="med-sub">Vendor ref: {{ bill['vendor_bill_reference'] }}</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="table-scroll" style="margin-top:16px">
+    <table>
+      <thead>
+        <tr>
+          <th>Medicine</th><th>Pack</th><th class="num">Qty</th><th>Batch</th><th>Expiry</th>
+          <th class="num">Cost</th><th class="num">MRP</th><th class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in stock_receipts %}
+      <tr>
+        <td>{{ r['medicine_name'] }}</td>
+        <td>{{ r['unit_name']|replace('File','Strip') }}</td>
+        <td class="num">{{ r['quantity'] }}</td>
+        <td>{{ r['batch_number'] or '—' }}</td>
+        <td>{{ r['expiry_date'] or '—' }}</td>
+        <td class="num">Rs {{ "%.2f"|format(r['cost_price_per_base_unit']) }}</td>
+        <td class="num">Rs {{ "%.2f"|format(r['mrp_per_base_unit']) }} ({{ 'I' if r['mrp_currency'] == 'INR' else 'N' }})</td>
+        <td class="num">Rs {{ "%.2f"|format(r['cost_price_per_base_unit'] * r['base_units_received']) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="bill-total-row">Total: Rs {{ "%.2f"|format(bill['total_amount']) }}</div>
+  <div class="bill-total-row">Paid: Rs {{ "%.2f"|format(total_paid) }}</div>
+  <div class="bill-total-row">{{ 'Credit' if amount_due < 0 else 'Due' }}: Rs {{ "%.2f"|format(amount_due|abs) }}</div>
+
+  <p class="report-footnote">
+    Note: Medicines nearing expiry (within 3 months of expiry) are returnable to the supplier as per prior agreement between the parties. MRP marked (N) is in NPR, (I) is INR converted to NPR at the prevailing rate.
+  </p>
+
+  <div class="signature-row">
+    <div class="signature-line">Received By</div>
+    <div class="signature-line">Checked By</div>
+    <div class="signature-line">Authorized Signatory</div>
+  </div>
+
+  <div class="no-print" style="display:flex; gap:10px; margin-top:16px;">
+    <button class="btn btn-secondary" onclick="window.print()">Print</button>
+    <a href="{{ url_for('purchases.purchase_bill_detail_view', purchase_bill_id=bill['id']) }}" class="btn btn-secondary">Back to Bill</a>
+  </div>
+</div>
+{% endblock %}
