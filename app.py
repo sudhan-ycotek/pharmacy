@@ -7,6 +7,7 @@ import time
 from flask import Flask
 
 import auth
+import companies
 import dashboard
 import db as db_module
 import inventory
@@ -72,6 +73,7 @@ def create_app(test_config=None):
         db_module.run_migrations(db_module.get_db())
 
     app.register_blueprint(auth.bp)
+    app.register_blueprint(companies.bp)
     app.register_blueprint(dashboard.bp)
     app.register_blueprint(inventory.bp)
     app.register_blueprint(photos.bp)

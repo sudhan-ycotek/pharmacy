@@ -5,12 +5,15 @@ from inventory import (
     add_stock,
     count_medicines,
     daily_stock_received,
+    edit_medicine,
     get_db,
+    get_medicine,
     get_medicine_units,
     list_medicines,
     list_stock_adjustments,
     list_stock_receipts,
     low_stock_medicines,
+    medicine_has_stock_history,
     record_stock_adjustment,
     recent_stock_receipts,
     search_medicines,
@@ -588,3 +591,286 @@ def test_low_stock_medicines_last_restock_none_when_never_restocked(app):
         medicine_id = make_box_file_medicine(low_stock_threshold=100)
         low = {m["id"]: m for m in low_stock_medicines()}
         assert low[medicine_id]["last_restock"] is None
+
+
+# --- company linkage + packing ------------------------------------------
+
+def test_add_medicine_stores_company_and_packing(app):
+    with app.app_context():
+        from companies import add_company
+
+        company_id = add_company("Cipla Nepal")
+        medicine_id = add_medicine(
+            "Cetamol", "box_file", 10, tablets_per_file=20, files_per_box=12,
+            company_id=company_id, packing="10x10 blister",
+        )
+        medicine = get_medicine(medicine_id)
+        assert medicine["company_id"] == company_id
+        assert medicine["packing"] == "10x10 blister"
+
+
+def test_add_medicine_company_and_packing_are_optional(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        medicine = get_medicine(medicine_id)
+        assert medicine["company_id"] is None
+        assert medicine["packing"] is None
+
+
+def test_add_medicine_rejects_unknown_company_id(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_medicine("Cetamol", "box_file", 10, tablets_per_file=20, files_per_box=12, company_id=999)
+
+
+def test_list_medicines_includes_company_name_via_join(app):
+    with app.app_context():
+        from companies import add_company
+
+        company_id = add_company("Cipla Nepal")
+        add_medicine("Cetamol", "box_file", 10, tablets_per_file=20, files_per_box=12, company_id=company_id)
+        make_bottled_medicine(name="Cough Syrup")
+        by_name = {m["name"]: m for m in list_medicines()}
+        assert by_name["Cetamol"]["company_name"] == "Cipla Nepal"
+        assert by_name["Cough Syrup"]["company_name"] is None
+
+
+# --- medicine_has_stock_history ------------------------------------------
+
+def test_medicine_has_stock_history_false_for_brand_new_medicine(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        assert medicine_has_stock_history(medicine_id) is False
+
+
+def test_medicine_has_stock_history_true_after_stock_receipt(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        assert medicine_has_stock_history(medicine_id) is True
+
+
+def test_medicine_has_stock_history_true_after_stock_adjustment(app):
+    with app.app_context():
+        from auth import create_user
+
+        medicine_id = make_box_file_medicine()
+        user_id = create_user("admin1", "pw", "admin")
+        # An adjustment alone (no prior receipt) can only increase stock.
+        record_stock_adjustment(medicine_id, "Box", 1, "increase", "found", user_id)
+        assert medicine_has_stock_history(medicine_id) is True
+
+
+def test_medicine_has_stock_history_true_after_sale_even_at_zero_stock(app):
+    """A medicine sold down to zero must still count as having history --
+    locking is based on historical rows existing, not current stock level."""
+    with app.app_context():
+        from auth import create_user
+        from sales import create_sale
+
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        user_id = create_user("cashier", "pw", "staff")
+        create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 240}])
+
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 0
+        assert medicine_has_stock_history(medicine_id) is True
+
+
+# --- edit_medicine --------------------------------------------------------
+
+def test_edit_medicine_raises_for_unknown_medicine(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            edit_medicine(999, "New Name", "box_file", 10, tablets_per_file=20, files_per_box=12)
+
+
+def test_edit_medicine_updates_name_company_packing_threshold_discount_photo(app):
+    with app.app_context():
+        from companies import add_company
+
+        medicine_id = make_box_file_medicine(name="Cetamol", low_stock_threshold=10, max_discount_percent=0)
+        company_id = add_company("Cipla Nepal")
+
+        edit_medicine(
+            medicine_id, "Cetamol Forte", "box_file", 25, max_discount_percent=15,
+            photo_path="photos/new.jpg", tablets_per_file=20, files_per_box=12,
+            company_id=company_id, packing="10x10 blister",
+        )
+
+        medicine = get_medicine(medicine_id)
+        assert medicine["name"] == "Cetamol Forte"
+        assert medicine["low_stock_threshold"] == 25
+        assert medicine["max_discount_percent"] == 15
+        assert medicine["photo_path"] == "photos/new.jpg"
+        assert medicine["company_id"] == company_id
+        assert medicine["packing"] == "10x10 blister"
+
+
+def test_edit_medicine_rejects_unknown_company_id(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cetamol", "box_file", 10, tablets_per_file=20, files_per_box=12,
+                           company_id=999)
+
+
+def test_edit_medicine_allows_packaging_change_when_no_stock_history(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        edit_medicine(medicine_id, "Cetamol", "box_file", 10, tablets_per_file=10, files_per_box=6)
+        units = {u["unit_name"]: u for u in get_medicine_units(medicine_id)}
+        assert units["File"]["qty_in_base_units"] == 10
+        assert units["Box"]["qty_in_base_units"] == 60
+
+
+def test_edit_medicine_allows_switching_packaging_type_when_no_stock_history(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        edit_medicine(medicine_id, "Cough Syrup", "bottled_other", 5, unit_name="Bottle")
+        medicine = get_medicine(medicine_id)
+        assert medicine["packaging_type"] == "bottled_other"
+        units = get_medicine_units(medicine_id)
+        assert len(units) == 1
+        assert units[0]["unit_name"] == "Bottle"
+
+
+def test_edit_medicine_rejects_packaging_type_change_after_stock_receipt(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cough Syrup", "bottled_other", 5, unit_name="Bottle")
+
+
+def test_edit_medicine_rejects_ratio_change_after_stock_receipt(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cetamol", "box_file", 10, tablets_per_file=10, files_per_box=12)
+
+
+def test_edit_medicine_rejects_unit_name_change_after_stock_receipt(app):
+    with app.app_context():
+        medicine_id = make_bottled_medicine(unit_name="Bottle")
+        make_stock(medicine_id, "Bottle", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cough Syrup", "bottled_other", 5, unit_name="Tube")
+
+
+def test_edit_medicine_allows_non_packaging_changes_after_stock_receipt(app):
+    """Locking only blocks packaging_type/ratio changes -- name/threshold/discount/
+    company/packing must remain editable even once stock history exists."""
+    with app.app_context():
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        edit_medicine(
+            medicine_id, "Cetamol Forte", "box_file", 30, max_discount_percent=10,
+            tablets_per_file=20, files_per_box=12, packing="10x10 blister",
+        )
+        medicine = get_medicine(medicine_id)
+        assert medicine["name"] == "Cetamol Forte"
+        assert medicine["low_stock_threshold"] == 30
+        assert medicine["max_discount_percent"] == 10
+        assert medicine["packing"] == "10x10 blister"
+
+
+def test_edit_medicine_rejects_ratio_change_after_stock_adjustment_only(app):
+    with app.app_context():
+        from auth import create_user
+
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        user_id = create_user("admin1", "pw", "admin")
+        record_stock_adjustment(medicine_id, "Box", 1, "increase", "found", user_id)
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cetamol", "box_file", 10, tablets_per_file=10, files_per_box=12)
+
+
+def test_edit_medicine_stays_locked_after_medicine_sold_down_to_zero_stock(app):
+    """The key locking scenario: a medicine that was sold down to zero current
+    stock must still reject a packaging/ratio change, because the lock is
+    based on historical rows existing, not on current stock_in_base_units."""
+    with app.app_context():
+        from auth import create_user
+        from sales import create_sale
+
+        medicine_id = make_box_file_medicine(tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        user_id = create_user("cashier", "pw", "staff")
+        create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 240}])
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 0
+
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cetamol", "box_file", 10, tablets_per_file=10, files_per_box=12)
+        with pytest.raises(ValueError):
+            edit_medicine(medicine_id, "Cough Syrup", "bottled_other", 10, unit_name="Bottle")
+
+        # But the medicine's stock level itself is unaffected by the rejection.
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 0
+
+
+# --- edit route -------------------------------------------------------
+
+def test_edit_medicine_view_get_renders_form(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol")
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get(f"/medicines/{medicine_id}/edit")
+    assert resp.status_code == 200
+    assert b"Cetamol" in resp.data
+
+
+def test_edit_medicine_view_get_404_for_unknown_medicine(app, client, admin_user):
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/999/edit")
+    assert resp.status_code == 404
+
+
+def test_edit_medicine_view_requires_admin(app, client, staff_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+    client.post("/login", data={"username": "staff1", "password": "staffpass"})
+    resp = client.get(f"/medicines/{medicine_id}/edit")
+    assert resp.status_code == 403
+
+
+def test_edit_medicine_view_post_updates_medicine(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol")
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/edit", data={
+        "name": "Cetamol Forte",
+        "packaging_type": "box_file",
+        "tablets_per_file": "20",
+        "files_per_box": "12",
+        "low_stock_threshold": "30",
+        "max_discount_percent": "12",
+        "packing": "10x10 blister",
+    })
+    assert resp.status_code == 302
+    with app.app_context():
+        medicine = get_medicine(medicine_id)
+        assert medicine["name"] == "Cetamol Forte"
+        assert medicine["low_stock_threshold"] == 30
+        assert medicine["packing"] == "10x10 blister"
+
+
+def test_edit_medicine_view_post_rejects_packaging_change_after_stock_history(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.post(f"/medicines/{medicine_id}/edit", data={
+        "name": "Cetamol",
+        "packaging_type": "box_file",
+        "tablets_per_file": "10",
+        "files_per_box": "12",
+        "low_stock_threshold": "10",
+        "max_discount_percent": "0",
+    })
+    # Re-renders the form with a flash instead of a 500 or a silent success.
+    assert resp.status_code == 200
+    with app.app_context():
+        units = {u["unit_name"]: u for u in get_medicine_units(medicine_id)}
+        assert units["File"]["qty_in_base_units"] == 20

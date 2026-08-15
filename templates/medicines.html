@@ -9,19 +9,36 @@
   {% endif %}
 </div>
 <div class="card panel">
+  <div class="field-row" style="margin-bottom:14px">
+    <div class="search-box" style="flex:1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input type="text" id="medicine-filter-search" placeholder="Search by name or code…" autocomplete="off">
+    </div>
+    <div class="field" style="max-width:220px">
+      <select id="medicine-filter-company">
+        <option value="">All companies</option>
+        {% for c in companies %}
+        <option value="{{ c['id'] }}">{{ c['name'] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
   <div class="table-scroll">
-    <table>
-      <thead><tr><th></th><th>Medicine</th><th>Category</th><th>Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
+    <table id="medicines-table">
+      <thead><tr><th></th><th>Code</th><th>Medicine</th><th>Company</th><th>Packing</th><th>Category</th><th>Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for m in medicines %}
-      <tr>
+      <tr data-name="{{ m['name']|lower }}" data-code="{{ m['id'] }}" data-company-id="{{ m['company_id'] or '' }}">
         <td>
           <div class="thumb">
             {% if m['photo_path'] %}<img src="{{ url_for('static', filename=m['photo_path']) }}" alt="">
             {% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"></rect></svg>{% endif %}
           </div>
         </td>
+        <td class="num">{{ m['id'] }}</td>
         <td><div class="med-name">{{ m['name'] }}</div></td>
+        <td>{{ m['company_name'] or '—' }}</td>
+        <td>{{ m['packing'] or '—' }}</td>
         <td>{{ "Box/Strip" if m['packaging_type'] == "box_file" else "Bottled/Other" }}</td>
         <td>
           {% for p in prices[m['id']] %}
@@ -42,6 +59,7 @@
         </td>
         <td>
           {% if session.get('role') == 'admin' %}
+          <a href="{{ url_for('inventory.edit_medicine_view', medicine_id=m['id']) }}" class="btn btn-secondary btn-icon">Edit</a>
           <a href="{{ url_for('inventory.add_stock_view', medicine_id=m['id']) }}" class="btn btn-secondary btn-icon">Manage Stock</a>
           {% endif %}
         </td>
@@ -54,4 +72,23 @@
   <p class="panel-desc">No medicines yet.</p>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+var filterSearch = document.getElementById("medicine-filter-search");
+var filterCompany = document.getElementById("medicine-filter-company");
+var medicineRows = document.querySelectorAll("#medicines-table tbody tr");
+
+function applyMedicineFilters() {
+  var query = filterSearch.value.trim().toLowerCase();
+  var companyId = filterCompany.value;
+  medicineRows.forEach(function (row) {
+    var matchesSearch = !query || row.dataset.name.indexOf(query) !== -1 || row.dataset.code.indexOf(query) !== -1;
+    var matchesCompany = !companyId || row.dataset.companyId === companyId;
+    row.style.display = (matchesSearch && matchesCompany) ? "" : "none";
+  });
+}
+filterSearch.addEventListener("input", applyMedicineFilters);
+filterCompany.addEventListener("change", applyMedicineFilters);
+</script>
 {% endblock %}
