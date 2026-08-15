@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block page_title %}New Purchase Bill{% endblock %}
-{% block page_desc %}Record a delivery from a vendor — add every medicine on the bill, then finalize.{% endblock %}
+{% block page_desc %}Record a delivery from a vendor — add every medicine on the bill, then finalize. Press F2 anytime to finalize.{% endblock %}
 {% block content %}
 <div class="card panel">
   <div class="field-row">
@@ -47,7 +47,7 @@
 
   <div class="table-scroll">
     <table id="items-table">
-      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th>Expiry</th><th class="num">Cost</th><th class="num">MRP</th><th class="num">Max Discount %</th><th class="num">Line Total</th><th></th></tr></thead>
+      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">MRP</th><th class="num">Max Discount %</th><th class="num">Line Total</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -64,7 +64,7 @@
     </div>
   </div>
 
-  <button type="button" id="finalize-btn" class="btn btn-primary">Finalize Purchase Bill</button>
+  <button type="button" id="finalize-btn" class="btn btn-primary">Finalize Purchase Bill (F2)</button>
 </div>
 
 <div class="modal-backdrop" id="new-vendor-modal">
@@ -74,7 +74,7 @@
     <form class="styled-form" onsubmit="return false;">
       <div class="field">
         <label>Name</label>
-        <input type="text" id="new-vendor-name" required>
+        <input type="text" id="new-vendor-name" required autofocus>
       </div>
       <div class="field">
         <label>Phone</label>
@@ -102,11 +102,7 @@
     </div>
     <div class="field">
       <label>Quantity</label>
-      <input type="number" id="item-qty-input" min="1" value="1">
-    </div>
-    <div class="field">
-      <label>Expiry date</label>
-      <input type="date" id="item-expiry-input">
+      <input type="number" id="item-qty-input" min="1" value="1" autofocus>
     </div>
     <div class="field-row">
       <div class="field">
@@ -129,7 +125,7 @@
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" onclick="closeModal('item-modal')">Cancel</button>
-      <button type="button" class="btn btn-primary" id="item-confirm-btn">Add to bill</button>
+      <button type="button" class="btn btn-primary" id="item-confirm-btn">Add (Enter)</button>
     </div>
   </div>
 </div>
@@ -140,6 +136,7 @@ var INR_TO_NPR_RATE = 1.60;
 var vendorSelect = document.getElementById("vendor-select");
 var items = [];
 var currentResults = [];
+var highlightedIndex = -1;
 var activeMedicine = null;
 var activeUnitIndex = 0;
 var activeCurrency = "NPR";
@@ -153,7 +150,7 @@ function renderResults() {
   resultsBox.innerHTML = "";
   currentResults.forEach(function (m, i) {
     var row = document.createElement("div");
-    row.className = "search-result";
+    row.className = "search-result" + (i === highlightedIndex ? " highlighted" : "");
     var infoDiv = document.createElement("div");
     var nameDiv = document.createElement("div");
     nameDiv.className = "med-name";
@@ -173,7 +170,6 @@ function selectMedicine(index) {
   document.getElementById("item-modal-title").textContent = "Add " + activeMedicine.name;
   document.getElementById("item-modal-error").style.display = "none";
   document.getElementById("item-qty-input").value = 1;
-  document.getElementById("item-expiry-input").value = "";
   document.getElementById("item-cost-input").value = "";
   document.getElementById("item-mrp-input").value = "";
   document.getElementById("item-max-discount-input").value = activeMedicine.max_discount_percent;
@@ -183,6 +179,7 @@ function selectMedicine(index) {
   renderUnitToggle();
   updateCostPreview();
   openModal("item-modal");
+  document.getElementById("item-qty-input").focus();
 }
 
 function renderUnitToggle() {
@@ -228,31 +225,60 @@ document.querySelectorAll("#item-currency-toggle button").forEach(function (btn)
 
 searchInput.addEventListener("input", function (e) {
   var q = e.target.value;
+  highlightedIndex = -1;
   if (!q) { currentResults = []; renderResults(); return; }
   fetch("/purchases/medicines/search?q=" + encodeURIComponent(q))
     .then(function (r) { return r.json(); })
     .then(function (medicines) {
       currentResults = medicines.filter(function (m) { return m.units.length > 0; });
+      highlightedIndex = currentResults.length ? 0 : -1;
       renderResults();
     });
+});
+
+searchInput.addEventListener("keydown", function (e) {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (currentResults.length) { highlightedIndex = Math.min(highlightedIndex + 1, currentResults.length - 1); renderResults(); }
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (currentResults.length) { highlightedIndex = Math.max(highlightedIndex - 1, 0); renderResults(); }
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (highlightedIndex >= 0) { selectMedicine(highlightedIndex); }
+  }
+});
+
+document.getElementById("item-qty-input").addEventListener("keydown", function (e) {
+  if (e.key === "Tab" || e.key === "ArrowRight") {
+    e.preventDefault();
+    activeUnitIndex = (activeUnitIndex + 1) % activeMedicine.units.length;
+    renderUnitToggle();
+  } else if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    activeUnitIndex = (activeUnitIndex - 1 + activeMedicine.units.length) % activeMedicine.units.length;
+    renderUnitToggle();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    confirmAddItem();
+  }
 });
 
 function confirmAddItem() {
   var errorBox = document.getElementById("item-modal-error");
   var quantity = parseInt(document.getElementById("item-qty-input").value, 10);
-  var expiryDate = document.getElementById("item-expiry-input").value;
   var costPrice = parseFloat(document.getElementById("item-cost-input").value);
   var mrp = parseFloat(document.getElementById("item-mrp-input").value);
   var maxDiscountPercent = parseFloat(document.getElementById("item-max-discount-input").value);
-  if (!quantity || quantity <= 0 || !expiryDate || isNaN(costPrice) || isNaN(mrp)) {
-    errorBox.textContent = "Fill in quantity, expiry date, cost, and MRP.";
+  if (!quantity || quantity <= 0 || isNaN(costPrice) || isNaN(mrp)) {
+    errorBox.textContent = "Fill in quantity, cost, and MRP.";
     errorBox.style.display = "block";
     return;
   }
   var unit = activeMedicine.units[activeUnitIndex];
   items.push({
     medicine_id: activeMedicine.id, name: activeMedicine.name, unit_name: unit.unit_name,
-    quantity: quantity, expiry_date: expiryDate, cost_price_original: costPrice,
+    quantity: quantity, cost_price_original: costPrice,
     cost_currency: activeCurrency, cost_price_per_base_unit: activeCurrency === "INR" ? costPrice * INR_TO_NPR_RATE : costPrice,
     mrp_per_base_unit: mrp, max_discount_percent: isNaN(maxDiscountPercent) ? null : maxDiscountPercent,
   });
@@ -261,6 +287,7 @@ function confirmAddItem() {
   searchInput.value = "";
   currentResults = [];
   renderResults();
+  searchInput.focus();
 }
 document.getElementById("item-confirm-btn").addEventListener("click", confirmAddItem);
 
@@ -276,19 +303,18 @@ function renderItems() {
     row.insertCell(1).textContent = displayUnitName(item.unit_name);
     row.insertCell(2).className = "num";
     row.cells[2].textContent = item.quantity;
-    row.insertCell(3).textContent = item.expiry_date;
-    var costCell = row.insertCell(4);
+    var costCell = row.insertCell(3);
     costCell.className = "num";
     costCell.textContent = item.cost_currency === "INR"
       ? "₹" + item.cost_price_original.toFixed(2) + " (Rs " + item.cost_price_per_base_unit.toFixed(2) + ")"
       : "Rs " + item.cost_price_original.toFixed(2);
+    row.insertCell(4).className = "num";
+    row.cells[4].textContent = item.mrp_per_base_unit.toFixed(2);
     row.insertCell(5).className = "num";
-    row.cells[5].textContent = item.mrp_per_base_unit.toFixed(2);
+    row.cells[5].textContent = item.max_discount_percent === null ? "—" : item.max_discount_percent;
     row.insertCell(6).className = "num";
-    row.cells[6].textContent = item.max_discount_percent === null ? "—" : item.max_discount_percent;
-    row.insertCell(7).className = "num";
-    row.cells[7].textContent = lineTotal.toFixed(2);
-    var removeCell = row.insertCell(8);
+    row.cells[6].textContent = lineTotal.toFixed(2);
+    var removeCell = row.insertCell(7);
     var removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-icon";
@@ -352,7 +378,7 @@ function finalizeBill() {
   formData.append("items_json", JSON.stringify(items.map(function (i) {
     return {
       medicine_id: i.medicine_id, unit_name: i.unit_name, quantity: i.quantity,
-      expiry_date: i.expiry_date, cost_price_original: i.cost_price_original,
+      cost_price_original: i.cost_price_original,
       cost_currency: i.cost_currency, mrp_per_base_unit: i.mrp_per_base_unit,
       max_discount_percent: i.max_discount_percent,
     };
@@ -370,5 +396,12 @@ function finalizeBill() {
     });
 }
 document.getElementById("finalize-btn").addEventListener("click", finalizeBill);
+document.addEventListener("keydown", function (e) {
+  if (e.key === "F2") {
+    e.preventDefault();
+    if (document.querySelector(".modal-backdrop.open")) { return; }
+    finalizeBill();
+  }
+});
 </script>
 {% endblock %}

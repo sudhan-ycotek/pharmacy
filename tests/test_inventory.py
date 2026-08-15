@@ -5,24 +5,23 @@ from inventory import (
     add_stock,
     count_medicines,
     daily_stock_received,
-    expiring_soon_batches,
-    get_batch,
     get_db,
     get_medicine_units,
-    list_batches,
     list_medicines,
+    list_stock_adjustments,
+    list_stock_receipts,
     low_stock_medicines,
-    recent_batches,
-    remove_stock,
+    record_stock_adjustment,
+    recent_stock_receipts,
     search_medicines,
     sellable_units,
     set_medicine_photo,
     stock_received_this_month,
     total_stock_units,
-    unit_price_range,
+    unit_prices,
     update_max_discount,
 )
-from helpers import make_batch, make_bottled_medicine, make_box_file_medicine
+from helpers import make_bottled_medicine, make_box_file_medicine, make_stock
 
 
 def test_add_medicine_box_file_creates_three_units(app):
@@ -83,7 +82,7 @@ def test_add_medicine_rejects_out_of_range_max_discount_percent(app):
 def test_add_stock_converts_to_base_units(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        new_total = add_stock(medicine_id, "Box", 2, "2030-01-01", 1.0, 2.0)
+        new_total = add_stock(medicine_id, "Box", 2, 1.0, 2.0)
         assert new_total == 480
 
 
@@ -91,80 +90,46 @@ def test_add_stock_unknown_unit_raises(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
-            add_stock(medicine_id, "Pallet", 1, "2030-01-01", 1.0, 2.0)
+            add_stock(medicine_id, "Pallet", 1, 1.0, 2.0)
 
 
 def test_add_stock_rejects_fractional_quantity(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", 2.5, "2030-01-01", 1.0, 2.0)
-
-
-def test_add_stock_rejects_past_expiry_date(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", 1, "2020-01-01", 1.0, 2.0)
-
-
-def test_add_stock_rejects_malformed_expiry_date(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", 1, "not-a-date", 1.0, 2.0)
+            add_stock(medicine_id, "Box", 2.5, 1.0, 2.0)
 
 
 def test_add_stock_rejects_negative_cost_or_mrp(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
         with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", 1, "2030-01-01", -1.0, 2.0)
+            add_stock(medicine_id, "Box", 1, -1.0, 2.0)
         with pytest.raises(ValueError):
-            add_stock(medicine_id, "Box", 1, "2030-01-01", 1.0, -2.0)
+            add_stock(medicine_id, "Box", 1, 1.0, -2.0)
 
 
-def test_add_stock_never_merges_batches_even_with_same_expiry_and_cost(app):
-    """Batches must stay distinct per purchase so each can be traced to its own
-    vendor bill -- two additions at the same cost/expiry must not collapse
-    into one row the way the old upsert used to."""
+def test_add_stock_updates_medicines_current_price(app):
+    """Cost/MRP on the medicine reflect the most recent restock -- 'last price wins'."""
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        add_stock(medicine_id, "Box", 2, "2030-01-01", 1.0, 2.0)
-        add_stock(medicine_id, "Box", 3, "2030-01-01", 1.0, 2.5)
-        batches = list_batches(medicine_id)
-        assert len(batches) == 2
-        received = sorted(b["quantity_received"] for b in batches)
-        assert received == [2 * 240, 3 * 240]
+        add_stock(medicine_id, "Box", 2, 1.0, 2.0)
+        add_stock(medicine_id, "Box", 3, 1.5, 2.5)
+        from inventory import get_medicine
+        medicine = get_medicine(medicine_id)
+        assert medicine["cost_price_per_base_unit"] == 1.5
+        assert medicine["mrp_per_base_unit"] == 2.5
 
 
-def test_add_stock_creates_new_batch_on_different_cost(app):
+def test_list_stock_receipts_has_no_vendor_for_manually_added_stock(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        add_stock(medicine_id, "Box", 2, "2030-01-01", 1.0, 2.0)
-        add_stock(medicine_id, "Box", 2, "2030-01-01", 1.5, 2.5)
-        batches = list_batches(medicine_id)
-        assert len(batches) == 2
+        add_stock(medicine_id, "Box", 1, 1.0, 2.0)
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["vendor_name"] is None
 
 
-def test_add_stock_creates_new_batch_on_different_expiry(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        add_stock(medicine_id, "Box", 2, "2030-01-01", 1.0, 2.0)
-        add_stock(medicine_id, "Box", 2, "2031-01-01", 1.0, 2.0)
-        batches = list_batches(medicine_id)
-        assert len(batches) == 2
-
-
-def test_list_batches_has_no_vendor_for_manually_added_stock(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        add_stock(medicine_id, "Box", 1, "2030-01-01", 1.0, 2.0)
-        batch = list_batches(medicine_id)[0]
-        assert batch["vendor_name"] is None
-
-
-def test_list_batches_shows_vendor_name_for_purchase_bill_batches(app):
+def test_list_stock_receipts_shows_vendor_name_for_purchase_bill_receipts(app):
     with app.app_context():
         from purchases import create_purchase_bill
         from vendors import add_vendor
@@ -175,62 +140,90 @@ def test_list_batches_shows_vendor_name_for_purchase_bill_batches(app):
         user_id = create_user("admin1", "pw", "admin")
         create_purchase_bill(user_id, vendor_id, "2026-08-01", [{
             "medicine_id": medicine_id, "unit_name": "Box", "quantity": 1,
-            "expiry_date": "2030-01-01", "cost_price_original": 1.0,
-            "cost_currency": "NPR", "mrp_per_base_unit": 2.0,
+            "cost_price_original": 1.0, "cost_currency": "NPR", "mrp_per_base_unit": 2.0,
         }])
-        batch = list_batches(medicine_id)[0]
-        assert batch["vendor_name"] == "ABC Vendors"
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["vendor_name"] == "ABC Vendors"
 
 
-def test_remove_stock_converts_to_base_units(app):
+def test_record_stock_adjustment_decrease_reduces_stock(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        new_total = remove_stock(batch_id, "Box", 2)
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        new_total = record_stock_adjustment(medicine_id, "Box", 2, "decrease", "damaged", user_id)
         assert new_total == 3 * 240
 
 
-def test_remove_stock_rejects_more_than_available(app):
+def test_record_stock_adjustment_increase_adds_stock(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        with pytest.raises(ValueError):
-            remove_stock(batch_id, "Box", 2)
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        new_total = record_stock_adjustment(medicine_id, "Box", 1, "increase", "found", user_id)
+        assert new_total == 6 * 240
 
 
-def test_remove_stock_unknown_unit_raises(app):
+def test_record_stock_adjustment_rejects_decrease_below_zero_stock(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
         with pytest.raises(ValueError):
-            remove_stock(batch_id, "Pallet", 1)
+            record_stock_adjustment(medicine_id, "Box", 2, "decrease", "damaged", user_id)
 
 
-def test_remove_stock_rejects_fractional_quantity(app):
+def test_record_stock_adjustment_unknown_unit_raises(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
         with pytest.raises(ValueError):
-            remove_stock(batch_id, "Box", 2.5)
+            record_stock_adjustment(medicine_id, "Pallet", 1, "decrease", "damaged", user_id)
 
 
-def test_remove_stock_is_isolated_to_its_own_batch(app):
-    """Removing more than one batch has must fail even when a sibling batch of
-    the same medicine holds plenty of stock."""
+def test_record_stock_adjustment_rejects_fractional_quantity(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        short_batch = make_batch(medicine_id, "Box", 1, expiry_date="2030-01-01",
-                                  cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        make_batch(medicine_id, "Box", 10, expiry_date="2031-01-01",
-                   cost_price_per_base_unit=1.5, mrp_per_base_unit=2.5)
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
         with pytest.raises(ValueError):
-            remove_stock(short_batch, "Box", 2)
+            record_stock_adjustment(medicine_id, "Box", 2.5, "decrease", "damaged", user_id)
+
+
+def test_record_stock_adjustment_rejects_invalid_reason(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        with pytest.raises(ValueError):
+            record_stock_adjustment(medicine_id, "Box", 1, "decrease", "not_a_reason", user_id)
+
+
+def test_list_stock_adjustments_reflects_recorded_adjustment(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine()
+        from auth import create_user
+        user_id = create_user("admin1", "pw", "admin")
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        record_stock_adjustment(medicine_id, "Box", 2, "decrease", "damaged", user_id, note="crushed in transit")
+        adjustments = list_stock_adjustments(medicine_id)
+        assert len(adjustments) == 1
+        assert adjustments[0]["reason"] == "damaged"
+        assert adjustments[0]["base_units_delta"] == -2 * 240
+        assert adjustments[0]["note"] == "crushed in transit"
 
 
 def test_low_stock_medicines_flags_below_threshold(app):
     with app.app_context():
         medicine_id = make_box_file_medicine(low_stock_threshold=50)
-        make_batch(medicine_id, "Tablet", 10, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+        make_stock(medicine_id, "Tablet", 10, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
         low = low_stock_medicines()
         assert any(m["id"] == medicine_id for m in low)
 
@@ -252,37 +245,22 @@ def test_update_max_discount_rejects_out_of_range(app):
             update_max_discount(medicine_id, -1)
 
 
-def test_unit_price_range_with_no_batches_is_none(app):
+def test_unit_prices_is_none_before_any_restock(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        ranges = unit_price_range(medicine_id)
-        by_unit = {r["unit_name"]: r for r in ranges}
-        assert by_unit["Tablet"]["min_price"] is None
-        assert by_unit["Tablet"]["max_price"] is None
+        prices = unit_prices(medicine_id)
+        by_unit = {p["unit_name"]: p for p in prices}
+        assert by_unit["Tablet"]["price"] is None
 
 
-def test_unit_price_range_with_one_batch_has_equal_min_and_max(app):
+def test_unit_prices_reflects_current_price_per_unit(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        make_batch(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
-        ranges = unit_price_range(medicine_id)
-        by_unit = {r["unit_name"]: r for r in ranges}
-        assert by_unit["Tablet"]["min_price"] == 2.5
-        assert by_unit["Tablet"]["max_price"] == 2.5
-        assert by_unit["Box"]["min_price"] == 2.5 * 240
-
-
-def test_unit_price_range_with_two_batches_spans_min_and_max(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        make_batch(medicine_id, "Tablet", 100, expiry_date="2030-01-01",
-                   cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
-        make_batch(medicine_id, "Tablet", 100, expiry_date="2031-01-01",
-                   cost_price_per_base_unit=1.2, mrp_per_base_unit=3.0)
-        ranges = unit_price_range(medicine_id)
-        by_unit = {r["unit_name"]: r for r in ranges}
-        assert by_unit["Tablet"]["min_price"] == 2.5
-        assert by_unit["Tablet"]["max_price"] == 3.0
+        make_stock(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+        prices = unit_prices(medicine_id)
+        by_unit = {p["unit_name"]: p for p in prices}
+        assert by_unit["Tablet"]["price"] == 2.5
+        assert by_unit["Box"]["price"] == 2.5 * 240
 
 
 def test_search_medicines_matches_by_name(app):
@@ -347,11 +325,11 @@ def test_add_medicine_view_invalid_input_flashes_error_not_500(admin_client):
     assert resp.status_code == 200
 
 
-def test_list_medicines_view_shows_price_range_and_photo(app, client, admin_user):
-    """Medicines list renders batch-derived prices and, when present, a photo."""
+def test_list_medicines_view_shows_price_and_photo(app, client, admin_user):
+    """Medicines list renders the medicine's current price and, when present, a photo."""
     with app.app_context():
         medicine_id = make_box_file_medicine(name="Cetamol")
-        make_batch(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+        make_stock(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
         cough_syrup_id = make_bottled_medicine(name="Cough Syrup", unit_name="Bottle")
         set_medicine_photo(cough_syrup_id, "photos/example.jpg")
     client.post("/login", data={"username": "admin", "password": "adminpass"})
@@ -359,12 +337,12 @@ def test_list_medicines_view_shows_price_range_and_photo(app, client, admin_user
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     assert "2.50" in body
-    assert "No stock priced yet" in body  # Cough Syrup has no batches yet
+    assert "No stock priced yet" in body  # Cough Syrup has no stock priced yet
     assert "photos/example.jpg" in body
 
 
-def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_user):
-    """Test that POST with invalid quantity re-renders form with flash instead of 500."""
+def test_add_stock_view_post_invalid_action_flashes_error(app, client, admin_user):
+    """Test that POST with no recognized action re-renders form with flash instead of 500."""
     with app.app_context():
         medicine_id = make_box_file_medicine()
     client.post("/login", data={"username": "admin", "password": "adminpass"})
@@ -379,14 +357,14 @@ def test_add_stock_view_post_invalid_quantity_flashes_error(app, client, admin_u
 def test_add_stock_view_shows_current_stock(app, client, admin_user):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        make_batch(medicine_id, "Box", 3, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        make_stock(medicine_id, "Box", 3, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
     client.post("/login", data={"username": "admin", "password": "adminpass"})
     resp = client.get(f"/medicines/{medicine_id}/add-stock")
     assert resp.status_code == 200
     assert b'"num">720</strong>' in resp.data
 
 
-def test_add_stock_view_post_add_action_no_longer_creates_batch(app, client, admin_user):
+def test_add_stock_view_post_add_action_no_longer_creates_stock(app, client, admin_user):
     """The old per-medicine 'Add Stock' form is replaced entirely by the vendor
     purchase-bill flow -- posting action=add to this route must no longer add stock."""
     with app.app_context():
@@ -396,7 +374,6 @@ def test_add_stock_view_post_add_action_no_longer_creates_batch(app, client, adm
         "action": "add",
         "unit_name": "Box",
         "quantity": "2",
-        "expiry_date": "2030-01-01",
         "cost_price_per_base_unit": "1.0",
         "mrp_per_base_unit": "2.0",
     })
@@ -444,16 +421,17 @@ def test_max_discount_ajax_route_requires_admin(app, client, staff_user):
     assert resp.status_code == 403
 
 
-def test_add_stock_view_post_remove_action_reduces_stock(app, client, admin_user):
+def test_add_stock_view_post_adjust_decrease_reduces_stock(app, client, admin_user):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
     client.post("/login", data={"username": "admin", "password": "adminpass"})
     resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
-        "action": "remove",
-        "batch_id": str(batch_id),
+        "action": "adjust",
+        "direction": "decrease",
         "unit_name": "Box",
         "quantity": "2",
+        "reason": "damaged",
     })
     assert resp.status_code == 302
     with app.app_context():
@@ -461,16 +439,17 @@ def test_add_stock_view_post_remove_action_reduces_stock(app, client, admin_user
         assert get_medicine(medicine_id)["stock_in_base_units"] == 3 * 240
 
 
-def test_add_stock_view_post_remove_more_than_available_flashes_error(app, client, admin_user):
+def test_add_stock_view_post_adjust_decrease_more_than_available_flashes_error(app, client, admin_user):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
     client.post("/login", data={"username": "admin", "password": "adminpass"})
     resp = client.post(f"/medicines/{medicine_id}/add-stock", data={
-        "action": "remove",
-        "batch_id": str(batch_id),
+        "action": "adjust",
+        "direction": "decrease",
         "unit_name": "Box",
         "quantity": "2",
+        "reason": "damaged",
     })
     assert resp.status_code == 200
     with app.app_context():
@@ -478,26 +457,30 @@ def test_add_stock_view_post_remove_more_than_available_flashes_error(app, clien
         assert get_medicine(medicine_id)["stock_in_base_units"] == 240
 
 
-def test_recent_batches_includes_recent_and_excludes_older_than_a_week(app):
+def test_recent_stock_receipts_includes_recent_and_excludes_older_than_a_week(app):
     with app.app_context():
         medicine_id = make_box_file_medicine(name="Cetamol")
-        recent_batch_id = make_batch(medicine_id, "Tablet", 10, expiry_date="2030-01-01",
-                                      cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
-        old_batch_id = make_batch(medicine_id, "Tablet", 5, expiry_date="2031-01-01",
-                                   cost_price_per_base_unit=1.2, mrp_per_base_unit=3.0)
         db = get_db()
+        make_stock(medicine_id, "Tablet", 10, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+        recent_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ?", (medicine_id,)
+        ).fetchone()["id"]
+        make_stock(medicine_id, "Tablet", 5, cost_price_per_base_unit=1.2, mrp_per_base_unit=3.0)
+        old_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ? AND id != ?", (medicine_id, recent_id)
+        ).fetchone()["id"]
         db.execute(
-            "UPDATE medicine_batches SET created_at = datetime('now', 'localtime', '-10 days') WHERE id = ?",
-            (old_batch_id,),
+            "UPDATE stock_receipts SET created_at = datetime('now', 'localtime', '-10 days') WHERE id = ?",
+            (old_id,),
         )
         db.commit()
 
-        recent = recent_batches(days=7)
-        ids = {b["id"] for b in recent}
-        assert recent_batch_id in ids
-        assert old_batch_id not in ids
-        by_id = {b["id"]: b for b in recent}
-        assert by_id[recent_batch_id]["medicine_name"] == "Cetamol"
+        recent = recent_stock_receipts(days=7)
+        ids = {r["id"] for r in recent}
+        assert recent_id in ids
+        assert old_id not in ids
+        by_id = {r["id"]: r for r in recent}
+        assert by_id[recent_id]["medicine_name"] == "Cetamol"
 
 
 def test_add_stock_view_post_update_discount_action(app, client, admin_user):
@@ -517,14 +500,18 @@ def test_add_stock_view_post_update_discount_action(app, client, admin_user):
 def test_daily_stock_received_groups_by_day(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        today_batch = make_batch(medicine_id, "Box", 2, expiry_date="2030-01-01",
-                                  cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        old_batch = make_batch(medicine_id, "Box", 3, expiry_date="2031-01-01",
-                                cost_price_per_base_unit=1.5, mrp_per_base_unit=2.5)
         db = get_db()
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        today_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ?", (medicine_id,)
+        ).fetchone()["id"]
+        make_stock(medicine_id, "Box", 3, cost_price_per_base_unit=1.5, mrp_per_base_unit=2.5)
+        old_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ? AND id != ?", (medicine_id, today_id)
+        ).fetchone()["id"]
         db.execute(
-            "UPDATE medicine_batches SET created_at = datetime('now', 'localtime', '-3 days') WHERE id = ?",
-            (old_batch,),
+            "UPDATE stock_receipts SET created_at = datetime('now', 'localtime', '-3 days') WHERE id = ?",
+            (old_id,),
         )
         db.commit()
 
@@ -537,11 +524,14 @@ def test_daily_stock_received_groups_by_day(app):
 def test_daily_stock_received_excludes_days_outside_window(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        old_batch = make_batch(medicine_id, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
         db = get_db()
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        old_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ?", (medicine_id,)
+        ).fetchone()["id"]
         db.execute(
-            "UPDATE medicine_batches SET created_at = datetime('now', 'localtime', '-30 days') WHERE id = ?",
-            (old_batch,),
+            "UPDATE stock_receipts SET created_at = datetime('now', 'localtime', '-30 days') WHERE id = ?",
+            (old_id,),
         )
         db.commit()
 
@@ -553,8 +543,8 @@ def test_total_stock_units_sums_across_medicines(app):
     with app.app_context():
         m1 = make_box_file_medicine(name="Cetamol")
         m2 = make_box_file_medicine(name="Napa")
-        make_batch(m1, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        make_batch(m2, "Box", 3, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        make_stock(m1, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        make_stock(m2, "Box", 3, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
         assert total_stock_units() == (2 + 3) * 240
 
 
@@ -566,79 +556,29 @@ def test_total_stock_units_zero_when_no_medicines(app):
 def test_stock_received_this_month_excludes_prior_month(app):
     with app.app_context():
         medicine_id = make_box_file_medicine()
-        this_month_batch = make_batch(medicine_id, "Box", 2, expiry_date="2030-01-01",
-                                       cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        last_month_batch = make_batch(medicine_id, "Box", 5, expiry_date="2031-01-01",
-                                       cost_price_per_base_unit=1.5, mrp_per_base_unit=2.5)
         db = get_db()
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        this_month_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ?", (medicine_id,)
+        ).fetchone()["id"]
+        make_stock(medicine_id, "Box", 5, cost_price_per_base_unit=1.5, mrp_per_base_unit=2.5)
+        last_month_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ? AND id != ?", (medicine_id, this_month_id)
+        ).fetchone()["id"]
         db.execute(
-            "UPDATE medicine_batches SET created_at = datetime('now', 'localtime', 'start of month', '-1 day') "
+            "UPDATE stock_receipts SET created_at = datetime('now', 'localtime', 'start of month', '-1 day') "
             "WHERE id = ?",
-            (last_month_batch,),
+            (last_month_id,),
         )
         db.commit()
 
         assert stock_received_this_month() == 2 * 240
 
 
-def test_expiring_soon_batches_includes_within_window_excludes_further_out(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine(name="Cetamol")
-        soon_batch = make_batch(medicine_id, "Tablet", 10, expiry_date="2030-06-10",
-                                 cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        far_batch = make_batch(medicine_id, "Tablet", 5, expiry_date="2031-01-01",
-                                cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        db = get_db()
-        today = db.execute("SELECT date('now', 'localtime') AS d").fetchone()["d"]
-        db.execute("UPDATE medicine_batches SET expiry_date = date(?, '+10 days') WHERE id = ?",
-                   (today, soon_batch))
-        db.execute("UPDATE medicine_batches SET expiry_date = date(?, '+60 days') WHERE id = ?",
-                   (today, far_batch))
-        db.commit()
-
-        results = expiring_soon_batches(days=30)
-        ids = {b["id"] for b in results}
-        assert soon_batch in ids
-        assert far_batch not in ids
-        by_id = {b["id"]: b for b in results}
-        assert by_id[soon_batch]["medicine_name"] == "Cetamol"
-
-
-def test_expiring_soon_batches_excludes_already_expired(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Tablet", 10, expiry_date="2030-06-10",
-                               cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        db = get_db()
-        db.execute(
-            "UPDATE medicine_batches SET expiry_date = date('now', 'localtime', '-1 day') WHERE id = ?",
-            (batch_id,),
-        )
-        db.commit()
-
-        results = expiring_soon_batches(days=30)
-        assert batch_id not in {b["id"] for b in results}
-
-
-def test_expiring_soon_batches_excludes_zero_remaining(app):
-    with app.app_context():
-        medicine_id = make_box_file_medicine()
-        batch_id = make_batch(medicine_id, "Tablet", 10, expiry_date="2030-06-10",
-                               cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
-        db = get_db()
-        today = db.execute("SELECT date('now', 'localtime') AS d").fetchone()["d"]
-        db.execute("UPDATE medicine_batches SET expiry_date = date(?, '+10 days'), quantity_remaining = 0 "
-                   "WHERE id = ?", (today, batch_id))
-        db.commit()
-
-        results = expiring_soon_batches(days=30)
-        assert batch_id not in {b["id"] for b in results}
-
-
 def test_low_stock_medicines_includes_last_restock_timestamp(app):
     with app.app_context():
         medicine_id = make_box_file_medicine(low_stock_threshold=100)
-        make_batch(medicine_id, "Tablet", 10, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+        make_stock(medicine_id, "Tablet", 10, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
         low = {m["id"]: m for m in low_stock_medicines()}
         assert low[medicine_id]["last_restock"] is not None
 

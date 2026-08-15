@@ -1,28 +1,27 @@
 {% extends "base.html" %}
 {% block page_title %}Manage Stock{% endblock %}
-{% block page_desc %}View current stock for {{ medicine['name'] }}, or correct a mistaken entry. New stock is received via a vendor purchase bill.{% endblock %}
+{% block page_desc %}View stock history for {{ medicine['name'] }}, or record a damaged/lost/found adjustment. New stock is received via a vendor purchase bill.{% endblock %}
 {% block content %}
-<div class="card panel" style="max-width:600px; margin:0 auto">
+<div class="card panel" style="max-width:700px; margin:0 auto">
   <p class="panel-desc">Current stock: <strong class="num">{{ medicine['stock_in_base_units'] }}</strong> base units</p>
 
-  <h2>Existing Batches</h2>
-  {% if batches %}
+  <h2>Stock Received</h2>
+  {% if stock_receipts %}
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Expiry</th><th class="num">Cost/unit</th><th class="num">MRP/unit</th><th class="num">Received</th><th class="num">Remaining</th><th>Source</th></tr></thead>
+      <thead><tr><th>Date</th><th class="num">Cost/unit</th><th class="num">MRP/unit</th><th class="num">Received</th><th>Source</th></tr></thead>
       <tbody>
-      {% for b in batches %}
+      {% for r in stock_receipts %}
       <tr>
-        <td>{{ b['expiry_date'] }}</td>
-        <td class="num">{{ "%.2f"|format(b['cost_price_per_base_unit']) }}</td>
-        <td class="num">{{ "%.2f"|format(b['mrp_per_base_unit']) }}</td>
-        <td class="num">{{ b['quantity_received'] }}</td>
-        <td class="num">{{ b['quantity_remaining'] }}</td>
+        <td>{{ r['created_at'] }}</td>
+        <td class="num">{{ "%.2f"|format(r['cost_price_per_base_unit']) }}</td>
+        <td class="num">{{ "%.2f"|format(r['mrp_per_base_unit']) }}</td>
+        <td class="num">{{ r['base_units_received'] }}</td>
         <td>
-          {% if b['purchase_bill_id'] %}
-          <a href="{{ url_for('purchases.purchase_bill_detail_view', purchase_bill_id=b['purchase_bill_id']) }}">{{ b['vendor_name'] }}</a>
+          {% if r['purchase_bill_id'] %}
+          <a href="{{ url_for('purchases.purchase_bill_detail_view', purchase_bill_id=r['purchase_bill_id']) }}">{{ r['vendor_name'] }}</a>
           {% else %}
-          —
+          Manual
           {% endif %}
         </td>
       </tr>
@@ -31,21 +30,18 @@
     </table>
   </div>
   {% else %}
-  <p class="panel-desc">No batches recorded yet.</p>
+  <p class="panel-desc">No stock received yet.</p>
   {% endif %}
 
-  <h2 style="margin-top:20px">Remove Stock</h2>
-  <p class="field-hint">Use this to correct a mistake — e.g. accidentally added too much to a specific batch.</p>
-  {% set available_batches = batches | selectattr('quantity_remaining', 'gt', 0) | list %}
-  {% if available_batches %}
+  <h2 style="margin-top:20px">Stock Adjustment</h2>
+  <p class="field-hint">Correct stock for damaged, lost, or found items — or fix a mistaken entry.</p>
   <form method="post" class="styled-form">
-    <input type="hidden" name="action" value="remove">
+    <input type="hidden" name="action" value="adjust">
     <div class="field">
-      <label>Batch</label>
-      <select name="batch_id" required>
-        {% for b in available_batches %}
-        <option value="{{ b['id'] }}">Expires {{ b['expiry_date'] }} — {{ b['quantity_remaining'] }} base units remaining</option>
-        {% endfor %}
+      <label>Direction</label>
+      <select name="direction" required>
+        <option value="decrease">Decrease (damaged, lost, correction)</option>
+        <option value="increase">Increase (found, correction)</option>
       </select>
     </div>
     <div class="field">
@@ -57,13 +53,46 @@
       </select>
     </div>
     <div class="field">
-      <label>Quantity to remove</label>
+      <label>Quantity</label>
       <input type="number" name="quantity" min="1" required>
     </div>
-    <button type="submit" class="btn btn-danger">Remove Stock</button>
+    <div class="field">
+      <label>Reason</label>
+      <select name="reason" required>
+        <option value="damaged">Damaged</option>
+        <option value="lost">Lost</option>
+        <option value="found">Found</option>
+        <option value="correction">Correction</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Note (optional)</label>
+      <input type="text" name="note">
+    </div>
+    <button type="submit" class="btn btn-danger">Record Adjustment</button>
   </form>
+
+  <h2 style="margin-top:20px">Adjustment History</h2>
+  {% if stock_adjustments %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Date</th><th>Unit</th><th class="num">Qty</th><th>Reason</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for a in stock_adjustments %}
+      <tr>
+        <td>{{ a['created_at'] }}</td>
+        <td>{{ a['unit_name']|replace('File','Strip') }}</td>
+        <td class="num">{{ "+" if a['base_units_delta'] > 0 }}{{ a['base_units_delta'] }}</td>
+        <td>{{ a['reason']|capitalize }}</td>
+        <td>{{ a['note'] or '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-  <p class="panel-desc">No stock available to remove.</p>
+  <p class="panel-desc">No adjustments recorded yet.</p>
   {% endif %}
 
   <h2 style="margin-top:20px">Max Discount</h2>

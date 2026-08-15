@@ -5,9 +5,8 @@ from flask import Blueprint, render_template
 from auth import current_user, login_required
 from inventory import (
     daily_stock_received,
-    expiring_soon_batches,
     low_stock_medicines,
-    recent_batches,
+    recent_stock_receipts,
     stock_received_this_month,
     total_stock_units,
 )
@@ -73,8 +72,7 @@ def home():
     return render_template(
         "dashboard.html",
         low_stock=low_stock_medicines(),
-        recent_stock=recent_batches(days=7),
-        expiring_soon=expiring_soon_batches(days=30),
+        recent_stock=recent_stock_receipts(days=7),
         recent_sales=recent_sales[:5],
 
         todays_total=revenue_values[-1],

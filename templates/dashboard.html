@@ -118,47 +118,19 @@
 <div class="card panel">
   <div class="panel-head">
     <div>
-      <h2>Expiry List</h2>
-      <p class="panel-desc">Batches expiring within 30 days.</p>
-    </div>
-  </div>
-  {% if expiring_soon %}
-  <div class="table-scroll">
-    <table>
-      <thead><tr><th>Medicine</th><th>Expiry</th><th class="num">Remaining</th></tr></thead>
-      <tbody>
-      {% for b in expiring_soon %}
-      <tr>
-        <td>{{ b['medicine_name'] }}</td>
-        <td>{{ b['expiry_date'] }}</td>
-        <td class="num">{{ b['quantity_remaining'] }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="panel-desc">Nothing is expiring in the next 30 days.</p>
-  {% endif %}
-</div>
-
-<div class="card panel">
-  <div class="panel-head">
-    <div>
       <h2>Recently Added Stock</h2>
-      <p class="panel-desc">Batches received in the last 7 days.</p>
+      <p class="panel-desc">Stock received in the last 7 days.</p>
     </div>
   </div>
   {% if recent_stock %}
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Medicine</th><th>Expiry</th><th class="num">Quantity Received</th><th>Added On</th></tr></thead>
+      <thead><tr><th>Medicine</th><th class="num">Quantity Received</th><th>Added On</th></tr></thead>
       <tbody>
       {% for b in recent_stock %}
       <tr>
         <td>{{ b['medicine_name'] }}</td>
-        <td>{{ b['expiry_date'] }}</td>
-        <td class="num">{{ b['quantity_received'] }}</td>
+        <td class="num">{{ b['base_units_received'] }}</td>
         <td>{{ b['created_at'] }}</td>
       </tr>
       {% endfor %}

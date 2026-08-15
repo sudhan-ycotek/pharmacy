@@ -1,12 +1,12 @@
-import datetime
-
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
-from auth import role_required
+from auth import current_user, role_required
 from db import get_db
 from photos import get_token_photo
 
 bp = Blueprint("inventory", __name__, url_prefix="/medicines")
+
+ADJUSTMENT_REASONS = ("damaged", "lost", "found", "correction", "other")
 
 
 def _positive_int(value):
@@ -19,16 +19,6 @@ def _non_negative_price(value):
 
 def _valid_percent(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 100
-
-
-def _parse_future_expiry(value):
-    try:
-        parsed = datetime.date.fromisoformat(value)
-    except (ValueError, TypeError):
-        raise ValueError("expiry date must be in YYYY-MM-DD format")
-    if parsed <= datetime.date.today():
-        raise ValueError("expiry date must be in the future")
-    return parsed.isoformat()
 
 
 def add_medicine(name, packaging_type, low_stock_threshold, max_discount_percent=0,
@@ -113,11 +103,13 @@ def search_medicines(query):
     ).fetchall()
 
 
-def insert_batch(db, medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit,
-                  mrp_per_base_unit, purchase_bill_id=None, cost_currency="NPR", cost_price_original=None):
-    """Validate and INSERT one new batch row, bumping medicines.stock_in_base_units.
+def _apply_stock_receipt(db, medicine_id, unit_name, quantity, cost_price_per_base_unit,
+                          mrp_per_base_unit, purchase_bill_id=None, cost_currency="NPR",
+                          cost_price_original=None):
+    """Validate and INSERT one new stock_receipts row, bumping medicines.stock_in_base_units
+    and overwriting its current cost/MRP (last price wins).
 
-    Does not commit -- callers that insert several batches in one purchase bill
+    Does not commit -- callers that insert several receipts in one purchase bill
     control the transaction boundary themselves, the same way create_sale()
     commits once after writing every line item.
     """
@@ -129,7 +121,6 @@ def insert_batch(db, medicine_id, unit_name, quantity, expiry_date, cost_price_p
         raise ValueError("cost price must be a non-negative number")
     if not _non_negative_price(mrp_per_base_unit):
         raise ValueError("MRP must be a non-negative number")
-    expiry = _parse_future_expiry(expiry_date)
 
     unit_row = db.execute(
         "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
@@ -138,7 +129,7 @@ def insert_batch(db, medicine_id, unit_name, quantity, expiry_date, cost_price_p
     if unit_row is None:
         raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
 
-    base_units_added = unit_row["qty_in_base_units"] * quantity
+    base_units_received = unit_row["qty_in_base_units"] * quantity
     cost_price_per_base_unit = round(cost_price_per_base_unit, 2)
     mrp_per_base_unit = round(mrp_per_base_unit, 2)
     if cost_price_original is None:
@@ -146,80 +137,95 @@ def insert_batch(db, medicine_id, unit_name, quantity, expiry_date, cost_price_p
 
     cur = db.execute(
         """
-        INSERT INTO medicine_batches
-            (medicine_id, expiry_date, cost_price_per_base_unit, mrp_per_base_unit,
-             quantity_received, quantity_remaining, purchase_bill_id, cost_currency, cost_price_original)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO stock_receipts
+            (medicine_id, unit_name, quantity, qty_in_base_units, base_units_received,
+             cost_currency, cost_price_original, cost_price_per_base_unit, mrp_per_base_unit,
+             purchase_bill_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (medicine_id, expiry, cost_price_per_base_unit, mrp_per_base_unit,
-         base_units_added, base_units_added, purchase_bill_id, cost_currency, round(cost_price_original, 2)),
+        (medicine_id, unit_name, quantity, unit_row["qty_in_base_units"], base_units_received,
+         cost_currency, round(cost_price_original, 2), cost_price_per_base_unit, mrp_per_base_unit,
+         purchase_bill_id),
     )
     db.execute(
-        "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
-        (base_units_added, medicine_id),
+        "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ?, "
+        "cost_price_per_base_unit = ?, mrp_per_base_unit = ? WHERE id = ?",
+        (base_units_received, cost_price_per_base_unit, mrp_per_base_unit, medicine_id),
     )
     return cur.lastrowid
 
 
-def add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit, mrp_per_base_unit):
+def add_stock(medicine_id, unit_name, quantity, cost_price_per_base_unit, mrp_per_base_unit):
     db = get_db()
-    insert_batch(db, medicine_id, unit_name, quantity, expiry_date,
-                 cost_price_per_base_unit, mrp_per_base_unit)
+    _apply_stock_receipt(db, medicine_id, unit_name, quantity, cost_price_per_base_unit, mrp_per_base_unit)
     db.commit()
     return db.execute(
         "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
     ).fetchone()["stock_in_base_units"]
 
 
-def remove_stock(batch_id, unit_name, quantity):
+def record_stock_adjustment(medicine_id, unit_name, quantity, direction, reason, user_id, note=None):
     if isinstance(quantity, bool) or not isinstance(quantity, int):
         raise ValueError("quantity must be a whole number")
     if quantity <= 0:
         raise ValueError("quantity must be positive")
+    if direction not in ("increase", "decrease"):
+        raise ValueError("direction must be 'increase' or 'decrease'")
+    if reason not in ADJUSTMENT_REASONS:
+        raise ValueError(f"reason must be one of: {', '.join(ADJUSTMENT_REASONS)}")
+
     db = get_db()
-    batch = db.execute("SELECT * FROM medicine_batches WHERE id = ?", (batch_id,)).fetchone()
-    if batch is None:
-        raise ValueError(f"batch {batch_id} not found")
+    medicine = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()
+    if medicine is None:
+        raise ValueError(f"medicine {medicine_id} not found")
     unit_row = db.execute(
         "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
-        (batch["medicine_id"], unit_name),
+        (medicine_id, unit_name),
     ).fetchone()
     if unit_row is None:
-        raise ValueError(f"unknown unit '{unit_name}' for medicine {batch['medicine_id']}")
-    base_units_removed = unit_row["qty_in_base_units"] * quantity
-    if batch["quantity_remaining"] < base_units_removed:
-        raise ValueError("cannot remove more stock than is currently in this batch")
+        raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
+
+    base_units = unit_row["qty_in_base_units"] * quantity
+    if direction == "decrease":
+        if medicine["stock_in_base_units"] < base_units:
+            raise ValueError("cannot remove more stock than is currently available")
+        base_units_delta = -base_units
+    else:
+        base_units_delta = base_units
+
     db.execute(
-        "UPDATE medicine_batches SET quantity_remaining = quantity_remaining - ? WHERE id = ?",
-        (base_units_removed, batch_id),
+        "INSERT INTO stock_adjustments (medicine_id, unit_name, quantity, qty_in_base_units, "
+        "base_units_delta, reason, note, recorded_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (medicine_id, unit_name, quantity, unit_row["qty_in_base_units"], base_units_delta,
+         reason, note, user_id),
     )
     db.execute(
-        "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
-        (base_units_removed, batch["medicine_id"]),
+        "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
+        (base_units_delta, medicine_id),
     )
     db.commit()
     return db.execute(
-        "SELECT stock_in_base_units FROM medicines WHERE id = ?", (batch["medicine_id"],)
+        "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
     ).fetchone()["stock_in_base_units"]
 
 
-def list_batches(medicine_id, only_available=True):
+def list_stock_receipts(medicine_id):
     db = get_db()
-    query = (
-        "SELECT mb.*, v.name AS vendor_name FROM medicine_batches mb "
-        "LEFT JOIN purchase_bills pb ON pb.id = mb.purchase_bill_id "
+    return db.execute(
+        "SELECT sr.*, v.name AS vendor_name FROM stock_receipts sr "
+        "LEFT JOIN purchase_bills pb ON pb.id = sr.purchase_bill_id "
         "LEFT JOIN vendors v ON v.id = pb.vendor_id "
-        "WHERE mb.medicine_id = ?"
-    )
-    if only_available:
-        query += " AND mb.quantity_remaining > 0"
-    query += " ORDER BY mb.expiry_date ASC"
-    return db.execute(query, (medicine_id,)).fetchall()
+        "WHERE sr.medicine_id = ? ORDER BY sr.created_at DESC",
+        (medicine_id,),
+    ).fetchall()
 
 
-def get_batch(batch_id):
+def list_stock_adjustments(medicine_id):
     db = get_db()
-    return db.execute("SELECT * FROM medicine_batches WHERE id = ?", (batch_id,)).fetchone()
+    return db.execute(
+        "SELECT * FROM stock_adjustments WHERE medicine_id = ? ORDER BY created_at DESC",
+        (medicine_id,),
+    ).fetchall()
 
 
 def update_max_discount(medicine_id, max_discount_percent):
@@ -233,13 +239,13 @@ def update_max_discount(medicine_id, max_discount_percent):
     db.commit()
 
 
-def recent_batches(days=7):
+def recent_stock_receipts(days=7):
     db = get_db()
     return db.execute(
-        "SELECT mb.*, m.name AS medicine_name FROM medicine_batches mb "
-        "JOIN medicines m ON m.id = mb.medicine_id "
-        f"WHERE mb.created_at >= datetime('now', 'localtime', '-{days} days') "
-        "ORDER BY mb.created_at DESC",
+        "SELECT sr.*, m.name AS medicine_name FROM stock_receipts sr "
+        "JOIN medicines m ON m.id = sr.medicine_id "
+        f"WHERE sr.created_at >= datetime('now', 'localtime', '-{days} days') "
+        "ORDER BY sr.created_at DESC",
     ).fetchall()
 
 
@@ -248,8 +254,8 @@ def low_stock_medicines():
     return db.execute(
         """
         SELECT m.*,
-               (SELECT MAX(mb.created_at) FROM medicine_batches mb
-                WHERE mb.medicine_id = m.id) AS last_restock
+               (SELECT MAX(sr.created_at) FROM stock_receipts sr
+                WHERE sr.medicine_id = m.id) AS last_restock
         FROM medicines m
         WHERE m.stock_in_base_units < m.low_stock_threshold
         ORDER BY m.name
@@ -260,8 +266,8 @@ def low_stock_medicines():
 def daily_stock_received(days=7):
     db = get_db()
     return db.execute(
-        "SELECT date(created_at) AS day, COALESCE(SUM(quantity_received), 0) AS received "
-        "FROM medicine_batches "
+        "SELECT date(created_at) AS day, COALESCE(SUM(base_units_received), 0) AS received "
+        "FROM stock_receipts "
         f"WHERE date(created_at) >= date('now', 'localtime', '-{days} days') "
         "GROUP BY day"
     ).fetchall()
@@ -277,36 +283,18 @@ def total_stock_units():
 def stock_received_this_month():
     db = get_db()
     return db.execute(
-        "SELECT COALESCE(SUM(quantity_received), 0) AS total FROM medicine_batches "
+        "SELECT COALESCE(SUM(base_units_received), 0) AS total FROM stock_receipts "
         "WHERE date(created_at) >= date('now', 'localtime', 'start of month')"
     ).fetchone()["total"]
 
 
-def expiring_soon_batches(days=30):
-    db = get_db()
-    return db.execute(
-        "SELECT mb.*, m.name AS medicine_name FROM medicine_batches mb "
-        "JOIN medicines m ON m.id = mb.medicine_id "
-        "WHERE mb.quantity_remaining > 0 "
-        "AND mb.expiry_date >= date('now', 'localtime') "
-        f"AND mb.expiry_date <= date('now', 'localtime', '+{days} days') "
-        "ORDER BY mb.expiry_date ASC"
-    ).fetchall()
-
-
-def unit_price_range(medicine_id):
-    db = get_db()
-    batch_prices = db.execute(
-        "SELECT mrp_per_base_unit FROM medicine_batches WHERE medicine_id = ? AND quantity_remaining > 0",
-        (medicine_id,),
-    ).fetchall()
+def unit_prices(medicine_id):
+    medicine = get_medicine(medicine_id)
     result = []
     for u in get_medicine_units(medicine_id):
-        if not batch_prices:
-            result.append({"unit_name": u["unit_name"], "min_price": None, "max_price": None})
-            continue
-        prices = [round(b["mrp_per_base_unit"] * u["qty_in_base_units"], 2) for b in batch_prices]
-        result.append({"unit_name": u["unit_name"], "min_price": min(prices), "max_price": max(prices)})
+        priced = medicine["mrp_per_base_unit"] > 0
+        price = round(medicine["mrp_per_base_unit"] * u["qty_in_base_units"], 2) if priced else None
+        result.append({"unit_name": u["unit_name"], "price": price})
     return result
 
 
@@ -314,10 +302,8 @@ def unit_price_range(medicine_id):
 @role_required("admin", "staff")
 def list_medicines_view():
     medicines = list_medicines()
-    price_ranges = {m["id"]: unit_price_range(m["id"]) for m in medicines}
-    return render_template(
-        "medicines.html", medicines=medicines, price_ranges=price_ranges
-    )
+    prices = {m["id"]: unit_prices(m["id"]) for m in medicines}
+    return render_template("medicines.html", medicines=medicines, prices=prices)
 
 
 @bp.route("/add", methods=["GET", "POST"])
@@ -372,10 +358,11 @@ def add_stock_view(medicine_id):
         try:
             if action == "update_discount":
                 update_max_discount(medicine_id, float(request.form["max_discount_percent"]))
-            elif action == "remove":
-                remove_stock(
-                    int(request.form["batch_id"]), request.form["unit_name"],
-                    int(request.form["quantity"]),
+            elif action == "adjust":
+                record_stock_adjustment(
+                    medicine_id, request.form["unit_name"], int(request.form["quantity"]),
+                    request.form["direction"], request.form["reason"],
+                    current_user()["id"], note=request.form.get("note") or None,
                 )
             else:
                 raise ValueError("unknown action — stock is now received via a vendor purchase bill")
@@ -386,7 +373,8 @@ def add_stock_view(medicine_id):
             flash("Invalid form input")
     return render_template(
         "add_stock.html", medicine=medicine, units=get_medicine_units(medicine_id),
-        batches=list_batches(medicine_id, only_available=False),
+        stock_receipts=list_stock_receipts(medicine_id),
+        stock_adjustments=list_stock_adjustments(medicine_id),
     )
 
 

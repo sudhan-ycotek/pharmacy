@@ -14,13 +14,6 @@ def make_bottled_medicine(name="Cough Syrup", low_stock_threshold=5, unit_name="
                          max_discount_percent=max_discount_percent, unit_name=unit_name)
 
 
-def make_batch(medicine_id, unit_name="Tablet", quantity=100, expiry_date="2030-01-01",
+def make_stock(medicine_id, unit_name="Tablet", quantity=100,
                cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5):
-    add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit, mrp_per_base_unit)
-    from inventory import get_db
-    db = get_db()
-    return db.execute(
-        "SELECT id FROM medicine_batches WHERE medicine_id = ? AND expiry_date = ? "
-        "AND cost_price_per_base_unit = ?",
-        (medicine_id, expiry_date, cost_price_per_base_unit),
-    ).fetchone()["id"]
+    add_stock(medicine_id, unit_name, quantity, cost_price_per_base_unit, mrp_per_base_unit)

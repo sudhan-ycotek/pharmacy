@@ -14,8 +14,8 @@
       <div class="value">Rs {{ "%.2f"|format(balance['total_paid']) }}</div>
     </div>
     <div class="card stat-card {{ 'alert' if balance['total_due'] > 0 }}">
-      <div class="label">Total Due</div>
-      <div class="value">Rs {{ "%.2f"|format(balance['total_due']) }}</div>
+      <div class="label">{{ 'Credit' if balance['total_due'] < 0 else 'Total Due' }}</div>
+      <div class="value">Rs {{ "%.2f"|format(balance['total_due']|abs) }}</div>
     </div>
   </div>
 </div>

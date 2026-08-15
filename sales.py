@@ -11,34 +11,7 @@ def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def sellable_batches(medicine_id, unit_name):
-    db = get_db()
-    unit_row = db.execute(
-        "SELECT qty_in_base_units FROM medicine_units "
-        "WHERE medicine_id = ? AND unit_name = ? AND is_sellable = 1",
-        (medicine_id, unit_name),
-    ).fetchone()
-    if unit_row is None:
-        raise ValueError(f"unknown or unsellable unit '{unit_name}' for medicine {medicine_id}")
-    qty = unit_row["qty_in_base_units"]
-    rows = db.execute(
-        "SELECT id, expiry_date, mrp_per_base_unit, quantity_remaining FROM medicine_batches "
-        "WHERE medicine_id = ? AND quantity_remaining >= ? ORDER BY expiry_date ASC",
-        (medicine_id, qty),
-    ).fetchall()
-    results = []
-    for r in rows:
-        max_qty = r["quantity_remaining"] // qty
-        if max_qty < 1:
-            continue
-        results.append({
-            "batch_id": r["id"], "expiry_date": r["expiry_date"],
-            "max_qty": max_qty, "unit_price": round(r["mrp_per_base_unit"] * qty, 2),
-        })
-    return results
-
-
-def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
+def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, patient_name=None):
     if not items:
         raise ValueError("sale must include at least one item")
     if discount_mode not in ("none", "item", "bill"):
@@ -50,8 +23,9 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
 
     db = get_db()
     prepared = []
-    # Track cumulative demand per batch_id to prevent overselling a specific batch
-    # across duplicate line items (two batches of the same medicine have independent stock).
+    # Track cumulative demand per medicine_id to prevent overselling across
+    # duplicate line items of the same medicine (e.g. a Tablet line and a File
+    # line both drawing from the same medicine's stock_in_base_units).
     cumulative_demand = {}
     medicine_max_discounts = {}
 
@@ -59,7 +33,6 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
         try:
             medicine_id = item["medicine_id"]
             unit_name = item["unit_name"]
-            batch_id = item["batch_id"]
             quantity = item["quantity"]
         except (KeyError, TypeError) as e:
             raise ValueError(f"invalid item structure: {e}")
@@ -74,9 +47,7 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
         if discount_mode != "item" and item_discount_percent != 0:
             raise ValueError("per-item discount_percent must be 0 unless discount_mode is 'item'")
 
-        medicine_row = db.execute(
-            "SELECT name, max_discount_percent FROM medicines WHERE id = ?", (medicine_id,)
-        ).fetchone()
+        medicine_row = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()
         if medicine_row is None:
             raise ValueError(f"medicine {medicine_id} not found")
         medicine_max_discounts[medicine_id] = medicine_row["max_discount_percent"]
@@ -89,31 +60,22 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
         if unit_row is None:
             raise ValueError(f"unknown unit '{unit_name}' for {medicine_row['name']}")
 
-        batch_row = db.execute(
-            "SELECT * FROM medicine_batches WHERE id = ? AND medicine_id = ?",
-            (batch_id, medicine_id),
-        ).fetchone()
-        if batch_row is None:
-            raise ValueError(f"batch {batch_id} does not belong to {medicine_row['name']}")
-
         if discount_mode == "item" and not (0 <= item_discount_percent <= medicine_row["max_discount_percent"]):
             raise ValueError(
                 f"discount for {medicine_row['name']} cannot exceed {medicine_row['max_discount_percent']}%"
             )
 
         base_units_needed = unit_row["qty_in_base_units"] * quantity
-        cumulative_demand[batch_id] = cumulative_demand.get(batch_id, 0) + base_units_needed
-        if batch_row["quantity_remaining"] < cumulative_demand[batch_id]:
-            raise ValueError(
-                f"Not enough {medicine_row['name']} in the batch expiring {batch_row['expiry_date']}"
-            )
+        cumulative_demand[medicine_id] = cumulative_demand.get(medicine_id, 0) + base_units_needed
+        if medicine_row["stock_in_base_units"] < cumulative_demand[medicine_id]:
+            raise ValueError(f"Not enough {medicine_row['name']} in stock")
 
-        gross_unit_price = round(batch_row["mrp_per_base_unit"] * unit_row["qty_in_base_units"], 2)
+        gross_unit_price = round(medicine_row["mrp_per_base_unit"] * unit_row["qty_in_base_units"], 2)
         prepared.append({
             "medicine_id": medicine_id, "unit_name": unit_name,
-            "qty_in_base_units": unit_row["qty_in_base_units"], "batch_id": batch_id, "quantity": quantity,
-            "cost_price_per_base_unit": batch_row["cost_price_per_base_unit"],
-            "mrp_per_base_unit": batch_row["mrp_per_base_unit"], "gross_unit_price": gross_unit_price,
+            "qty_in_base_units": unit_row["qty_in_base_units"], "quantity": quantity,
+            "cost_price_per_base_unit": medicine_row["cost_price_per_base_unit"],
+            "mrp_per_base_unit": medicine_row["mrp_per_base_unit"], "gross_unit_price": gross_unit_price,
             "item_discount_percent": item_discount_percent, "base_units_needed": base_units_needed,
         })
 
@@ -139,24 +101,21 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0):
     discount_amount = round(subtotal_before_discount - total, 2)
 
     cur = db.execute(
-        "INSERT INTO sales (user_id, timestamp, subtotal_before_discount, discount_mode, "
+        "INSERT INTO sales (user_id, timestamp, patient_name, subtotal_before_discount, discount_mode, "
         "bill_discount_percent, discount_amount, total, voided) "
-        "VALUES (?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, 0)",
-        (user_id, subtotal_before_discount, discount_mode, bill_discount_percent, discount_amount, total),
+        "VALUES (?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, 0)",
+        (user_id, patient_name, subtotal_before_discount, discount_mode, bill_discount_percent,
+         discount_amount, total),
     )
     sale_id = cur.lastrowid
     for p in prepared:
         db.execute(
-            "INSERT INTO sale_items (sale_id, medicine_id, unit_name, qty_in_base_units, batch_id, "
+            "INSERT INTO sale_items (sale_id, medicine_id, unit_name, qty_in_base_units, "
             "quantity, cost_price_per_base_unit, mrp_per_base_unit, gross_unit_price, "
-            "discount_percent, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (sale_id, p["medicine_id"], p["unit_name"], p["qty_in_base_units"], p["batch_id"], p["quantity"],
+            "discount_percent, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (sale_id, p["medicine_id"], p["unit_name"], p["qty_in_base_units"], p["quantity"],
              p["cost_price_per_base_unit"], p["mrp_per_base_unit"], p["gross_unit_price"],
              p["item_discount_percent"], p["unit_price"], p["subtotal"]),
-        )
-        db.execute(
-            "UPDATE medicine_batches SET quantity_remaining = quantity_remaining - ? WHERE id = ?",
-            (p["base_units_needed"], p["batch_id"]),
         )
         db.execute(
             "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
@@ -178,10 +137,6 @@ def void_sale(sale_id):
     items = db.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchall()
     for item in items:
         base_units = item["qty_in_base_units"] * item["quantity"]
-        db.execute(
-            "UPDATE medicine_batches SET quantity_remaining = quantity_remaining + ? WHERE id = ?",
-            (base_units, item["batch_id"]),
-        )
         db.execute(
             "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
             (base_units, item["medicine_id"]),
@@ -230,11 +185,10 @@ def get_sale(sale_id):
     if sale is None:
         return None
     items = db.execute(
-        "SELECT si.*, m.name AS medicine_name, mb.expiry_date AS batch_expiry_date, "
+        "SELECT si.*, m.name AS medicine_name, "
         "(si.subtotal - si.cost_price_per_base_unit * si.qty_in_base_units * si.quantity) AS profit "
         "FROM sale_items si "
         "JOIN medicines m ON m.id = si.medicine_id "
-        "JOIN medicine_batches mb ON mb.id = si.batch_id "
         "WHERE si.sale_id = ?",
         (sale_id,),
     ).fetchall()
@@ -285,22 +239,19 @@ def search():
     results = []
     for m in medicines:
         units = sellable_units(m["id"])
+        priced = m["mrp_per_base_unit"] > 0
         results.append({
             "id": m["id"], "name": m["name"], "packaging_type": m["packaging_type"],
             "photo_path": m["photo_path"], "max_discount_percent": m["max_discount_percent"],
-            "units": [{"unit_name": u["unit_name"]} for u in units],
+            "units": [
+                {
+                    "unit_name": u["unit_name"],
+                    "price": round(m["mrp_per_base_unit"] * u["qty_in_base_units"], 2) if priced else None,
+                }
+                for u in units
+            ],
         })
     return jsonify(results)
-
-
-@bp.route("/batches/<int:medicine_id>")
-@login_required
-def medicine_batches(medicine_id):
-    try:
-        batches = sellable_batches(medicine_id, request.args.get("unit_name", ""))
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    return jsonify(batches)
 
 
 @bp.route("", methods=["POST"])
@@ -322,10 +273,12 @@ def finalize():
         if not items:
             raise ValueError("sale must include at least one item")
 
+        patient_name = (payload.get("patient_name") or "").strip() or None
         result = create_sale(
             user["id"], items,
             discount_mode=payload.get("discount_mode", "none"),
             bill_discount_percent=payload.get("bill_discount_percent", 0),
+            patient_name=patient_name,
         )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

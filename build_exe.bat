@@ -8,6 +8,10 @@ python -m PyInstaller --onefile --noconsole --name PharmacyInventory ^
   --add-data "templates;templates" ^
   --add-data "static;static" ^
   --add-data "schema.sql;." ^
+  --collect-all pywebview ^
+  --collect-all clr_loader ^
+  --collect-all pythonnet ^
+  --hidden-import webview.platforms.edgechromium ^
   app.py
 echo.
 echo Done. Find PharmacyInventory.exe in the dist\ folder.

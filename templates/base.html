@@ -12,44 +12,52 @@
     <aside class="sidebar">
       <div class="brand"><span class="mark">P</span> Pharmacy Name</div>
       <div class="nav-label">Menu</div>
-      <a class="nav-item {{ 'active' if request.endpoint == 'dashboard.home' }}" href="{{ url_for('dashboard.home') }}">
+      <a class="nav-item {{ 'active' if request.endpoint == 'dashboard.home' }}" accesskey="d" href="{{ url_for('dashboard.home') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>
         Dashboard
+        <span class="kbd">Alt+D</span>
       </a>
-      <a class="nav-item {{ 'active' if request.endpoint == 'sales.new_sale' }}" href="{{ url_for('sales.new_sale') }}">
+      <a class="nav-item {{ 'active' if request.endpoint == 'sales.new_sale' }}" accesskey="s" href="{{ url_for('sales.new_sale') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="14" rx="2"></rect><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"></path><path d="M2 11h20"></path></svg>
         POS
+        <span class="kbd">Alt+S</span>
       </a>
-      <a class="nav-item {{ 'active' if request.endpoint == 'inventory.list_medicines_view' }}" href="{{ url_for('inventory.list_medicines_view') }}">
+      <a class="nav-item {{ 'active' if request.endpoint == 'inventory.list_medicines_view' }}" accesskey="p" href="{{ url_for('inventory.list_medicines_view') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v3"></path><path d="M3 8h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>
         Products
+        <span class="kbd">Alt+P</span>
       </a>
       {% if session.get('role') == 'admin' %}
-      <a class="nav-item {{ 'active' if request.endpoint and (request.endpoint.startswith('vendors.') or request.endpoint.startswith('purchases.')) }}" href="{{ url_for('vendors.list_vendors_view') }}">
+      <a class="nav-item {{ 'active' if request.endpoint and (request.endpoint.startswith('vendors.') or request.endpoint.startswith('purchases.')) }}" accesskey="v" href="{{ url_for('vendors.list_vendors_view') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16V6a1 1 0 0 1 1-1h9v11"></path><path d="M13 9h4l4 4v3a1 1 0 0 1-1 1h-1"></path><circle cx="7.5" cy="17.5" r="1.75"></circle><circle cx="17.5" cy="17.5" r="1.75"></circle></svg>
         Vendors
+        <span class="kbd">Alt+V</span>
       </a>
       {% endif %}
-      <a class="nav-item {{ 'active' if request.endpoint == 'sales.list_sales_view' }}" href="{{ url_for('sales.list_sales_view') }}">
+      <a class="nav-item {{ 'active' if request.endpoint == 'sales.list_sales_view' }}" accesskey="h" href="{{ url_for('sales.list_sales_view') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>
         Sales History
+        <span class="kbd">Alt+H</span>
       </a>
       {% if session.get('role') == 'admin' %}
-      <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('users.') }}" href="{{ url_for('users.list_users') }}">
+      <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('users.') }}" accesskey="a" href="{{ url_for('users.list_users') }}">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
         Staff Accounts
+        <span class="kbd">Alt+A</span>
       </a>
       {% endif %}
       <div class="sidebar-bottom">
         <div class="nav-label">Settings</div>
-        <a class="nav-item {{ 'active' if request.endpoint == 'auth.change_password' }}" href="{{ url_for('auth.change_password') }}">
+        <a class="nav-item {{ 'active' if request.endpoint == 'auth.change_password' }}" accesskey="c" href="{{ url_for('auth.change_password') }}">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20a8 8 0 1 0-8-8"></path><path d="M12 12v-4"></path><path d="M12 12l3 2"></path></svg>
           Change Password
+          <span class="kbd">Alt+C</span>
         </a>
         <form method="post" action="{{ url_for('auth.logout') }}">
-          <button type="submit" class="nav-item logout-btn">
+          <button type="submit" class="nav-item logout-btn" accesskey="x">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg>
             Log Out
+            <span class="kbd">Alt+X</span>
           </button>
         </form>
       </div>

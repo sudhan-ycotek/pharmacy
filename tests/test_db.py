@@ -2,7 +2,9 @@
 from db import get_db
 
 EXPECTED_TABLES = {
-    "users", "medicines", "medicine_units", "medicine_batches",
+    "users", "medicines", "medicine_units", "stock_receipts",
+    "vendors", "purchase_bills", "purchase_payments",
+    "purchase_returns", "purchase_return_items", "stock_adjustments",
     "sales", "sale_items", "photo_tokens",
 }
 

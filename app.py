@@ -103,14 +103,32 @@ if __name__ == "__main__":
             if sys.stderr is None:
                 sys.stderr = open(os.devnull, "w")
 
-            import threading
-            import webbrowser
+        import socket
+        import threading
 
-            def _open_browser():
-                time.sleep(1.5)
-                webbrowser.open("http://localhost:5000")
-
-            threading.Thread(target=_open_browser, daemon=True).start()
+        import webview
 
         app = create_app()
-        app.run(host="0.0.0.0", port=5000)
+
+        def _run_server():
+            # use_reloader=False is required: the reloader re-execs the process,
+            # which would spawn a second webview window.
+            app.run(host="0.0.0.0", port=5000, use_reloader=False)
+
+        threading.Thread(target=_run_server, daemon=True).start()
+
+        # Poll instead of a fixed sleep -- more robust than a hardcoded delay on a
+        # slow/cold onefile extraction.
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", 5000), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+
+        webview.create_window(
+            "Pharmacy Inventory", "http://127.0.0.1:5000",
+            width=1280, height=800, min_size=(1024, 700),
+        )
+        webview.start()

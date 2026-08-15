@@ -43,16 +43,16 @@ def test_delete_staff_with_sales_history_raises_gracefully(app):
     """Deleting a staff account with sales history raises ValueError (IntegrityError becomes ValueError)"""
     with app.app_context():
         # Setup: create medicine and staff user
-        from helpers import make_batch, make_bottled_medicine
+        from helpers import make_bottled_medicine, make_stock
         medicine_id = make_bottled_medicine(name="Paracetamol", low_stock_threshold=10, unit_name="Tablet")
-        batch_id = make_batch(medicine_id, "Tablet", 100, cost_price_per_base_unit=2.0, mrp_per_base_unit=5.0)
+        make_stock(medicine_id, "Tablet", 100, cost_price_per_base_unit=2.0, mrp_per_base_unit=5.0)
 
         staff_id = create_user("staff1", "pw", "staff")
 
         # Create a sale by this staff member
         from sales import create_sale
         create_sale(staff_id, [
-            {"medicine_id": medicine_id, "unit_name": "Tablet", "batch_id": batch_id, "quantity": 10},
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 10},
         ])
 
         # Verify the sale was created

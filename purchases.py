@@ -6,11 +6,13 @@ from flask import Blueprint, flash, jsonify, redirect, render_template, request,
 
 from auth import current_user, role_required
 from db import get_db
-from inventory import get_medicine_units, insert_batch, search_medicines, update_max_discount
+from inventory import _apply_stock_receipt, get_medicine_units, search_medicines, update_max_discount
 
 bp = Blueprint("purchases", __name__, url_prefix="/purchases")
 
 INR_TO_NPR_RATE = 1.60  # fixed India-Nepal peg: 1 INR = 1.60 NPR
+
+RETURN_REASONS = ("damaged", "wrong_item", "vendor_recall", "other")
 
 
 def convert_to_npr(amount, currency):
@@ -74,7 +76,6 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
         medicine_id = item["medicine_id"]
         unit_name = item["unit_name"]
         quantity = item["quantity"]
-        expiry_date = item["expiry_date"]
         cost_currency = item.get("cost_currency", "NPR")
         cost_price_original = item["cost_price_original"]
         mrp_per_base_unit = item["mrp_per_base_unit"]
@@ -97,7 +98,7 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
         computed_total += round(cost_price_per_base_unit * base_units, 2)
         prepared.append({
             "medicine_id": medicine_id, "unit_name": unit_name, "quantity": quantity,
-            "expiry_date": expiry_date, "cost_currency": cost_currency,
+            "cost_currency": cost_currency,
             "cost_price_original": cost_price_original,
             "cost_price_per_base_unit": cost_price_per_base_unit,
             "mrp_per_base_unit": mrp_per_base_unit, "max_discount_percent": max_discount_percent,
@@ -121,8 +122,8 @@ def create_purchase_bill(user_id, vendor_id, bill_date, items, vendor_bill_refer
         )
 
     for p in prepared:
-        insert_batch(
-            db, p["medicine_id"], p["unit_name"], p["quantity"], p["expiry_date"],
+        _apply_stock_receipt(
+            db, p["medicine_id"], p["unit_name"], p["quantity"],
             p["cost_price_per_base_unit"], p["mrp_per_base_unit"],
             purchase_bill_id=purchase_bill_id, cost_currency=p["cost_currency"],
             cost_price_original=round(p["cost_price_original"], 2),
@@ -223,11 +224,11 @@ def get_purchase_bill(purchase_bill_id):
     ).fetchone()
 
 
-def list_batches_for_bill(purchase_bill_id):
+def list_stock_receipts_for_bill(purchase_bill_id):
     db = get_db()
     return db.execute(
-        "SELECT mb.*, m.name AS medicine_name FROM medicine_batches mb "
-        "JOIN medicines m ON m.id = mb.medicine_id WHERE mb.purchase_bill_id = ? ORDER BY mb.id",
+        "SELECT sr.*, m.name AS medicine_name FROM stock_receipts sr "
+        "JOIN medicines m ON m.id = sr.medicine_id WHERE sr.purchase_bill_id = ? ORDER BY sr.id",
         (purchase_bill_id,),
     ).fetchall()
 
@@ -250,6 +251,149 @@ def search_medicines_for_purchase(query):
             "units": [{"unit_name": u["unit_name"]} for u in units],
         })
     return results
+
+
+# --- purchase returns -------------------------------------------------------
+
+def returnable_quantity(purchase_bill_id, medicine_id, unit_name):
+    """How many units of this bill's medicine/unit line are still eligible to
+    return -- what was received on this bill, minus what's already been
+    returned (and not voided) against it."""
+    db = get_db()
+    received = db.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS q FROM stock_receipts "
+        "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ?",
+        (purchase_bill_id, medicine_id, unit_name),
+    ).fetchone()["q"]
+    returned = db.execute(
+        "SELECT COALESCE(SUM(pri.quantity), 0) AS q FROM purchase_return_items pri "
+        "JOIN purchase_returns pr ON pr.id = pri.purchase_return_id "
+        "WHERE pr.purchase_bill_id = ? AND pri.medicine_id = ? AND pri.unit_name = ? AND pr.voided = 0",
+        (purchase_bill_id, medicine_id, unit_name),
+    ).fetchone()["q"]
+    return received - returned
+
+
+def create_purchase_return(purchase_bill_id, items, reason, user_id):
+    if not items:
+        raise ValueError("purchase return must include at least one item")
+    if reason not in RETURN_REASONS:
+        raise ValueError(f"reason must be one of: {', '.join(RETURN_REASONS)}")
+
+    db = get_db()
+    bill = db.execute("SELECT * FROM purchase_bills WHERE id = ?", (purchase_bill_id,)).fetchone()
+    if bill is None:
+        raise ValueError(f"purchase bill {purchase_bill_id} not found")
+
+    # --- validation pass ---
+    prepared = []
+    computed_total = 0.0
+    for item in items:
+        medicine_id = item["medicine_id"]
+        unit_name = item["unit_name"]
+        quantity = item["quantity"]
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive whole number")
+
+        unit_row = db.execute(
+            "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
+            (medicine_id, unit_name),
+        ).fetchone()
+        if unit_row is None:
+            raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
+
+        max_returnable = returnable_quantity(purchase_bill_id, medicine_id, unit_name)
+        if quantity > max_returnable:
+            raise ValueError(f"cannot return more than {max_returnable} of this item on this bill")
+
+        medicine = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()
+        base_units = unit_row["qty_in_base_units"] * quantity
+        if medicine["stock_in_base_units"] < base_units:
+            raise ValueError(f"cannot return more {medicine['name']} than is currently in stock")
+
+        cost_row = db.execute(
+            "SELECT cost_price_per_base_unit FROM stock_receipts "
+            "WHERE purchase_bill_id = ? AND medicine_id = ? AND unit_name = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (purchase_bill_id, medicine_id, unit_name),
+        ).fetchone()
+        cost_price_per_base_unit = cost_row["cost_price_per_base_unit"]
+        amount = round(cost_price_per_base_unit * base_units, 2)
+        computed_total += amount
+        prepared.append({
+            "medicine_id": medicine_id, "unit_name": unit_name, "quantity": quantity,
+            "qty_in_base_units": unit_row["qty_in_base_units"], "base_units": base_units,
+            "cost_price_per_base_unit": cost_price_per_base_unit, "amount": amount,
+        })
+
+    total_amount = round(computed_total, 2)
+
+    # --- write pass ---
+    cur = db.execute(
+        "INSERT INTO purchase_returns (purchase_bill_id, return_date, reason, total_amount, "
+        "recorded_by_user_id, voided) VALUES (?, date('now', 'localtime'), ?, ?, ?, 0)",
+        (purchase_bill_id, reason, total_amount, user_id),
+    )
+    return_id = cur.lastrowid
+    for p in prepared:
+        db.execute(
+            "INSERT INTO purchase_return_items (purchase_return_id, medicine_id, unit_name, quantity, "
+            "qty_in_base_units, base_units_returned, cost_price_per_base_unit, amount) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (return_id, p["medicine_id"], p["unit_name"], p["quantity"], p["qty_in_base_units"],
+             p["base_units"], p["cost_price_per_base_unit"], p["amount"]),
+        )
+        db.execute(
+            "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
+            (p["base_units"], p["medicine_id"]),
+        )
+    db.execute(
+        "UPDATE purchase_bills SET total_amount = total_amount - ? WHERE id = ?",
+        (total_amount, purchase_bill_id),
+    )
+    db.commit()
+    return {"purchase_return_id": return_id, "total_amount": total_amount}
+
+
+def void_purchase_return(return_id):
+    db = get_db()
+    ret = db.execute("SELECT * FROM purchase_returns WHERE id = ?", (return_id,)).fetchone()
+    if ret is None:
+        raise ValueError(f"purchase return {return_id} not found")
+    if ret["voided"]:
+        raise ValueError(f"purchase return {return_id} already voided")
+
+    items = db.execute(
+        "SELECT * FROM purchase_return_items WHERE purchase_return_id = ?", (return_id,)
+    ).fetchall()
+    for item in items:
+        db.execute(
+            "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
+            (item["base_units_returned"], item["medicine_id"]),
+        )
+    db.execute(
+        "UPDATE purchase_bills SET total_amount = total_amount + ? WHERE id = ?",
+        (ret["total_amount"], ret["purchase_bill_id"]),
+    )
+    db.execute("UPDATE purchase_returns SET voided = 1 WHERE id = ?", (return_id,))
+    db.commit()
+
+
+def list_purchase_returns(purchase_bill_id):
+    db = get_db()
+    returns = db.execute(
+        "SELECT * FROM purchase_returns WHERE purchase_bill_id = ? ORDER BY id DESC",
+        (purchase_bill_id,),
+    ).fetchall()
+    result = []
+    for r in returns:
+        items = db.execute(
+            "SELECT pri.*, m.name AS medicine_name FROM purchase_return_items pri "
+            "JOIN medicines m ON m.id = pri.medicine_id WHERE pri.purchase_return_id = ?",
+            (r["id"],),
+        ).fetchall()
+        result.append({"return": r, "items": items})
+    return result
 
 
 @bp.route("/new")
@@ -306,8 +450,9 @@ def purchase_bill_detail_view(purchase_bill_id):
         return "Purchase bill not found", 404
     return render_template(
         "purchase_bill_detail.html", bill=bill,
-        batches=list_batches_for_bill(purchase_bill_id),
+        stock_receipts=list_stock_receipts_for_bill(purchase_bill_id),
         payments=list_payments(purchase_bill_id),
+        returns=list_purchase_returns(purchase_bill_id),
         total_paid=bill_total_paid(purchase_bill_id),
         amount_due=bill_amount_due(purchase_bill_id),
     )
@@ -326,3 +471,43 @@ def add_payment_view(purchase_bill_id):
     except (ValueError, KeyError, TypeError) as e:
         flash(str(e))
     return redirect(url_for("purchases.purchase_bill_detail_view", purchase_bill_id=purchase_bill_id))
+
+
+@bp.route("/<int:purchase_bill_id>/returnable")
+@role_required("admin")
+def returnable_quantity_view(purchase_bill_id):
+    medicine_id = request.args.get("medicine_id", type=int)
+    unit_name = request.args.get("unit_name", "")
+    return jsonify({"returnable": returnable_quantity(purchase_bill_id, medicine_id, unit_name)})
+
+
+@bp.route("/<int:purchase_bill_id>/returns", methods=["POST"])
+@role_required("admin")
+def create_purchase_return_view(purchase_bill_id):
+    user = current_user()
+    try:
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("return must include at least one item")
+        reason = payload.get("reason") or "other"
+        result = create_purchase_return(purchase_bill_id, items, reason, user["id"])
+    except (ValueError, KeyError, TypeError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
+
+
+@bp.route("/returns/<int:return_id>/void", methods=["POST"])
+@role_required("admin")
+def void_purchase_return_view(return_id):
+    db = get_db()
+    ret = db.execute("SELECT purchase_bill_id FROM purchase_returns WHERE id = ?", (return_id,)).fetchone()
+    if ret is None:
+        return "Purchase return not found", 404
+    try:
+        void_purchase_return(return_id)
+    except ValueError as e:
+        flash(str(e))
+    return redirect(url_for("purchases.purchase_bill_detail_view", purchase_bill_id=ret["purchase_bill_id"]))

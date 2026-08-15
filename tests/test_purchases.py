@@ -3,28 +3,32 @@ import json
 
 import pytest
 
-from inventory import get_medicine, list_batches
+from inventory import get_medicine, list_stock_receipts
 from purchases import (
     bill_total_paid,
     convert_to_npr,
     create_purchase_bill,
+    create_purchase_return,
     get_purchase_bill,
-    list_batches_for_bill,
     list_payments,
     list_purchase_bills,
+    list_purchase_returns,
+    list_stock_receipts_for_bill,
     record_payment,
+    returnable_quantity,
     search_medicines_for_purchase,
     vendor_balance,
+    void_purchase_return,
 )
 from vendors import add_vendor
 from helpers import make_box_file_medicine
 
 
-def _cetamol_item(quantity=2, unit_name="Box", expiry_date="2030-01-01",
+def _cetamol_item(quantity=2, unit_name="Box",
                    cost_price_original=1.0, cost_currency="NPR", mrp_per_base_unit=2.0,
                    max_discount_percent=None):
     return {
-        "unit_name": unit_name, "quantity": quantity, "expiry_date": expiry_date,
+        "unit_name": unit_name, "quantity": quantity,
         "cost_price_original": cost_price_original, "cost_currency": cost_currency,
         "mrp_per_base_unit": mrp_per_base_unit, "max_discount_percent": max_discount_percent,
     }
@@ -52,7 +56,7 @@ def test_convert_to_npr_rejects_negative_amount():
 
 # --- create_purchase_bill ------------------------------------------------
 
-def test_create_purchase_bill_creates_one_batch_per_item(app):
+def test_create_purchase_bill_creates_one_stock_receipt_per_item(app):
     with app.app_context():
         vendor_id = add_vendor("ABC Vendors")
         cetamol_id = make_box_file_medicine(name="Cetamol")
@@ -64,11 +68,11 @@ def test_create_purchase_bill_creates_one_batch_per_item(app):
             dict(_cetamol_item(quantity=1), medicine_id=pantop_id),
         ])
 
-        assert len(list_batches(cetamol_id)) == 1
-        assert len(list_batches(pantop_id)) == 1
-        batch = list_batches(cetamol_id)[0]
-        assert batch["purchase_bill_id"] == result["purchase_bill_id"]
-        assert batch["quantity_received"] == 2 * 240
+        assert len(list_stock_receipts(cetamol_id)) == 1
+        assert len(list_stock_receipts(pantop_id)) == 1
+        receipt = list_stock_receipts(cetamol_id)[0]
+        assert receipt["purchase_bill_id"] == result["purchase_bill_id"]
+        assert receipt["base_units_received"] == 2 * 240
 
 
 def test_create_purchase_bill_converts_inr_cost_and_keeps_original(app):
@@ -81,10 +85,10 @@ def test_create_purchase_bill_converts_inr_cost_and_keeps_original(app):
             dict(_cetamol_item(cost_price_original=10.0, cost_currency="INR"), medicine_id=medicine_id),
         ])
 
-        batch = list_batches(medicine_id)[0]
-        assert batch["cost_currency"] == "INR"
-        assert batch["cost_price_original"] == 10.0
-        assert batch["cost_price_per_base_unit"] == 16.0  # 10 INR * 1.60
+        receipt = list_stock_receipts(medicine_id)[0]
+        assert receipt["cost_currency"] == "INR"
+        assert receipt["cost_price_original"] == 10.0
+        assert receipt["cost_price_per_base_unit"] == 16.0  # 10 INR * 1.60
 
 
 def test_create_purchase_bill_computes_total_amount_as_sum_of_items(app):
@@ -132,7 +136,7 @@ def test_create_purchase_bill_is_atomic_on_invalid_item(app):
                 dict(_cetamol_item(unit_name="Pallet"), medicine_id=medicine_id),
             ])
 
-        assert list_batches(medicine_id) == []
+        assert list_stock_receipts(medicine_id) == []
         assert get_medicine(medicine_id)["stock_in_base_units"] == 0
 
 
@@ -248,7 +252,7 @@ def test_vendor_balance_rolls_up_across_bills(app):
         assert balance["total_due"] == r2["total_amount"]
 
 
-def test_get_purchase_bill_and_list_batches_and_payments(app):
+def test_get_purchase_bill_and_list_stock_receipts_and_payments(app):
     with app.app_context():
         vendor_id = add_vendor("ABC Vendors")
         medicine_id = make_box_file_medicine(name="Cetamol")
@@ -260,7 +264,7 @@ def test_get_purchase_bill_and_list_batches_and_payments(app):
 
         bill = get_purchase_bill(result["purchase_bill_id"])
         assert bill["vendor_id"] == vendor_id
-        assert len(list_batches_for_bill(result["purchase_bill_id"])) == 1
+        assert len(list_stock_receipts_for_bill(result["purchase_bill_id"])) == 1
         payments = list_payments(result["purchase_bill_id"])
         assert len(payments) == 1
         assert payments[0]["amount"] == 50.0
@@ -276,6 +280,153 @@ def test_search_medicines_for_purchase_includes_box_unit(app):
         assert len(results) == 1
         unit_names = {u["unit_name"] for u in results[0]["units"]}
         assert "Box" in unit_names
+
+
+# --- purchase returns -------------------------------------------------------
+
+def test_returnable_quantity_starts_at_received_quantity(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        assert returnable_quantity(result["purchase_bill_id"], medicine_id, "Box") == 5
+
+
+def test_create_purchase_return_reduces_stock_and_bill_total(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0, mrp_per_base_unit=2.0),
+                 medicine_id=medicine_id),
+        ])
+        stock_before = get_medicine(medicine_id)["stock_in_base_units"]
+
+        ret = create_purchase_return(
+            result["purchase_bill_id"], [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 2}],
+            "damaged", user_id,
+        )
+        # 2 boxes = 480 base units at 1.0 NPR/base unit = 480.0
+        assert ret["total_amount"] == 480.0
+        assert get_medicine(medicine_id)["stock_in_base_units"] == stock_before - 2 * 240
+        bill = get_purchase_bill(result["purchase_bill_id"])
+        assert bill["total_amount"] == result["total_amount"] - 480.0
+
+
+def test_create_purchase_return_rejects_more_than_returnable(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=2, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        with pytest.raises(ValueError):
+            create_purchase_return(
+                result["purchase_bill_id"],
+                [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 3}],
+                "damaged", user_id,
+            )
+
+
+def test_create_purchase_return_rejects_more_than_current_stock(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=2, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        # Box is never sellable, so simulate the received stock having left the shop
+        # (e.g. broken down and sold as loose tablets) via a stock adjustment, exercising
+        # the "can't return stock that's no longer on hand" guard.
+        from inventory import record_stock_adjustment
+        record_stock_adjustment(medicine_id, "Box", 2, "decrease", "damaged", user_id)
+
+        with pytest.raises(ValueError):
+            create_purchase_return(
+                result["purchase_bill_id"],
+                [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1}],
+                "damaged", user_id,
+            )
+
+
+def test_void_purchase_return_restores_stock_and_bill_total(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        stock_before = get_medicine(medicine_id)["stock_in_base_units"]
+        bill_total_before = get_purchase_bill(result["purchase_bill_id"])["total_amount"]
+
+        ret = create_purchase_return(
+            result["purchase_bill_id"], [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 2}],
+            "damaged", user_id,
+        )
+        void_purchase_return(ret["purchase_return_id"])
+
+        assert get_medicine(medicine_id)["stock_in_base_units"] == stock_before
+        assert get_purchase_bill(result["purchase_bill_id"])["total_amount"] == bill_total_before
+        with pytest.raises(ValueError):
+            void_purchase_return(ret["purchase_return_id"])
+
+
+def test_list_purchase_returns_includes_items(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        create_purchase_return(
+            result["purchase_bill_id"], [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1}],
+            "damaged", user_id,
+        )
+        returns = list_purchase_returns(result["purchase_bill_id"])
+        assert len(returns) == 1
+        assert returns[0]["items"][0]["medicine_name"] == "Cetamol"
+
+
+def test_create_purchase_return_route_creates_return(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+    resp = admin_client.post(
+        f"/purchases/{purchase_bill_id}/returns",
+        json={"items": [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1}], "reason": "damaged"},
+    )
+    assert resp.status_code == 200
+    assert "purchase_return_id" in resp.get_json()
+
+
+def test_void_purchase_return_route_redirects(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=5, cost_price_original=1.0), medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+        ret = create_purchase_return(
+            purchase_bill_id, [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1}],
+            "damaged", user_id,
+        )
+    resp = admin_client.post(f"/purchases/returns/{ret['purchase_return_id']}/void")
+    assert resp.status_code == 302
 
 
 def _make_admin(app):
@@ -324,7 +475,7 @@ def test_create_purchase_bill_view_multipart_creates_bill(admin_client, app):
     data = resp.get_json()
     assert "purchase_bill_id" in data
     with app.app_context():
-        assert len(list_batches(medicine_id)) == 1
+        assert len(list_stock_receipts(medicine_id)) == 1
         bill = get_purchase_bill(data["purchase_bill_id"])
         assert bill["bill_image_path"] is not None
 
