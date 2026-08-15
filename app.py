@@ -69,6 +69,7 @@ def create_app(test_config=None):
     with app.app_context():
         if not os.path.exists(app.config["DATABASE"]):
             db_module.init_db(os.path.join(BUNDLE_DIR, "schema.sql"))
+        db_module.run_migrations(db_module.get_db())
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(dashboard.bp)
