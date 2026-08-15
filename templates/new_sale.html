@@ -90,6 +90,8 @@ var activeBatches = [];
 var activeBatchIndex = 0;
 var discountMode = "none";
 
+function displayUnitName(name) { return name === "File" ? "Strip" : name; }
+
 var searchInput = document.getElementById("search-box");
 var resultsBox = document.getElementById("search-results");
 
@@ -131,7 +133,7 @@ function renderResults() {
     medNameDiv.textContent = m.name;
     var medSubDiv = document.createElement("div");
     medSubDiv.className = "med-sub";
-    medSubDiv.textContent = m.packaging_type === "box_file" ? "Box/File" : "Bottled/Other";
+    medSubDiv.textContent = m.packaging_type === "box_file" ? "Box/Strip" : "Bottled/Other";
     infoDiv.appendChild(medNameDiv);
     infoDiv.appendChild(medSubDiv);
     row.appendChild(infoDiv);
@@ -161,7 +163,7 @@ function renderUnitToggle() {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn-secondary" + (i === activeUnitIndex ? " selected" : "");
-    btn.textContent = u.unit_name;
+    btn.textContent = displayUnitName(u.unit_name);
     btn.addEventListener("click", function () { activeUnitIndex = i; renderUnitToggle(); loadBatchesForActiveUnit(); });
     toggle.appendChild(btn);
   });
@@ -327,7 +329,7 @@ function renderBill() {
     nameCell.textContent = item.name;
 
     var unitCell = row.insertCell(1);
-    unitCell.textContent = item.unit_name;
+    unitCell.textContent = displayUnitName(item.unit_name);
 
     var batchCell = row.insertCell(2);
     batchCell.textContent = item.expiry_date;

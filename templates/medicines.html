@@ -22,15 +22,15 @@
           </div>
         </td>
         <td><div class="med-name">{{ m['name'] }}</div></td>
-        <td>{{ "Box/File" if m['packaging_type'] == "box_file" else "Bottled/Other" }}</td>
+        <td>{{ "Box/Strip" if m['packaging_type'] == "box_file" else "Bottled/Other" }}</td>
         <td>
           {% for b in price_ranges[m['id']] %}
           {% if b['min_price'] is none %}
-          <div class="med-sub num">{{ b['unit_name'] }}: No stock priced yet</div>
+          <div class="med-sub num">{{ b['unit_name']|replace('File','Strip') }}: No stock priced yet</div>
           {% elif b['min_price'] == b['max_price'] %}
-          <div class="med-sub num">{{ b['unit_name'] }}: Rs {{ "%.2f"|format(b['min_price']) }}</div>
+          <div class="med-sub num">{{ b['unit_name']|replace('File','Strip') }}: Rs {{ "%.2f"|format(b['min_price']) }}</div>
           {% else %}
-          <div class="med-sub num">{{ b['unit_name'] }}: Rs {{ "%.2f"|format(b['min_price']) }}–{{ "%.2f"|format(b['max_price']) }}</div>
+          <div class="med-sub num">{{ b['unit_name']|replace('File','Strip') }}: Rs {{ "%.2f"|format(b['min_price']) }}–{{ "%.2f"|format(b['max_price']) }}</div>
           {% endif %}
           {% endfor %}
         </td>

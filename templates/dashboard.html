@@ -4,13 +4,53 @@
 {% block content %}
 <div class="stat-row">
   <div class="card stat-card">
-    <div class="label">Revenue Today</div>
+    <div class="stat-card-head">
+      <div class="label">Revenue Today</div>
+      <span class="badge {{ revenue_delta.class }}">{{ revenue_delta.text }}</span>
+    </div>
     <div class="value">Rs {{ "%.2f"|format(todays_total) }}</div>
+    <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="{{ revenue_spark }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
   </div>
+
   <div class="card stat-card">
-    <div class="label">Total Products</div>
-    <div class="value">{{ total_products }}</div>
+    <div class="stat-card-head">
+      <div class="label">Items Sold</div>
+      <span class="badge {{ items_delta.class }}">{{ items_delta.text }}</span>
+    </div>
+    <div class="value">{{ items_sold_today }}</div>
+    <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="{{ items_spark }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
+    <div class="sub">in base units, today</div>
   </div>
+
+  <div class="card stat-card">
+    <div class="stat-card-head">
+      <div class="label">Items In Stock</div>
+      <span class="badge {{ stock_delta_class }}">+{{ stock_received_this_month }} this month</span>
+    </div>
+    <div class="value">{{ total_stock }}</div>
+    <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="{{ stock_spark }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
+    <div class="sub">daily stock received, last 7 days</div>
+  </div>
+
+  {% if session.get('role') == 'admin' %}
+  <div class="card stat-card">
+    <div class="stat-card-head">
+      <div class="label">Profit Made</div>
+      <span class="badge {{ profit_delta.class }}">{{ profit_delta.text }}</span>
+    </div>
+    <div class="value">Rs {{ "%.2f"|format(profit_today) }}</div>
+    <svg class="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none">
+      <polyline points="{{ profit_spark }}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+    </svg>
+  </div>
+  {% endif %}
+
   <div class="card stat-card {{ 'alert' if low_stock }}">
     <div class="label">Low Stock</div>
     <div class="value">{{ low_stock|length }}</div>
@@ -57,16 +97,48 @@
   {% if low_stock %}
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Medicine</th><th class="num">Stock</th><th class="num">Threshold</th></tr></thead>
+      <thead><tr><th>Medicine</th><th class="num">Stock</th><th class="num">Threshold</th><th>Last Restock</th></tr></thead>
       <tbody>
       {% for m in low_stock %}
-      <tr><td>{{ m['name'] }}</td><td class="num">{{ m['stock_in_base_units'] }}</td><td class="num">{{ m['low_stock_threshold'] }}</td></tr>
+      <tr>
+        <td>{{ m['name'] }}</td>
+        <td class="num">{{ m['stock_in_base_units'] }}</td>
+        <td class="num">{{ m['low_stock_threshold'] }}</td>
+        <td>{{ m['last_restock'] or 'Never restocked' }}</td>
+      </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
   <p class="panel-desc">No medicines are low on stock.</p>
+  {% endif %}
+</div>
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Expiry List</h2>
+      <p class="panel-desc">Batches expiring within 30 days.</p>
+    </div>
+  </div>
+  {% if expiring_soon %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Medicine</th><th>Expiry</th><th class="num">Remaining</th></tr></thead>
+      <tbody>
+      {% for b in expiring_soon %}
+      <tr>
+        <td>{{ b['medicine_name'] }}</td>
+        <td>{{ b['expiry_date'] }}</td>
+        <td class="num">{{ b['quantity_remaining'] }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">Nothing is expiring in the next 30 days.</p>
   {% endif %}
 </div>
 
@@ -95,6 +167,45 @@
   </div>
   {% else %}
   <p class="panel-desc">No stock has been added in the last 7 days.</p>
+  {% endif %}
+</div>
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Recent Transactions</h2>
+      <p class="panel-desc">The last 5 sales.</p>
+    </div>
+    <a class="btn btn-secondary btn-icon" href="{{ url_for('sales.list_sales_view') }}">View all</a>
+  </div>
+  {% if recent_sales %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Date/Time</th><th>Sold By</th><th class="num">Total</th>
+          {% if session.get('role') == 'admin' %}<th class="num">Profit</th>{% endif %}
+          <th>Status</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in recent_sales %}
+      <tr>
+        <td>{{ s['timestamp'] }}</td>
+        <td>{{ s['username'] }}</td>
+        <td class="num">Rs {{ "%.2f"|format(s['total']) }}</td>
+        {% if session.get('role') == 'admin' %}
+        <td class="num">Rs {{ "%.2f"|format(s['profit']) }}</td>
+        {% endif %}
+        <td>{% if s['voided'] %}<span class="badge critical">Voided</span>{% else %}<span class="badge good">Completed</span>{% endif %}</td>
+        <td><a href="{{ url_for('sales.receipt', sale_id=s['id']) }}" class="btn btn-secondary btn-icon">Receipt</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No sales recorded yet.</p>
   {% endif %}
 </div>
 {% endblock %}

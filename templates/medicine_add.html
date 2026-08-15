@@ -11,7 +11,7 @@
     <div class="field">
       <label>Category</label>
       <select name="packaging_type" id="packaging-type">
-        <option value="box_file">Box/File (tablets, capsules — sold by file or tablet)</option>
+        <option value="box_file">Box/Strip (tablets, capsules — sold by strip or tablet)</option>
         <option value="bottled_other">Bottled/Other (syrups, ointments — sold by the unit)</option>
       </select>
     </div>
@@ -19,15 +19,15 @@
     <div id="box-file-fields">
       <div class="field-row">
         <div class="field">
-          <label>Tablets per file</label>
+          <label>Tablets per strip</label>
           <input type="number" name="tablets_per_file" min="1" value="20">
         </div>
         <div class="field">
-          <label>Files per box</label>
+          <label>Strips per box</label>
           <input type="number" name="files_per_box" min="1" value="12">
         </div>
       </div>
-      <p class="form-preview" id="box-file-preview">1 box = 12 files = 240 tablets</p>
+      <p class="form-preview" id="box-file-preview">1 box = 12 strips = 240 tablets</p>
     </div>
 
     <div id="bottled-fields" style="display:none">
@@ -53,10 +53,10 @@
     <div class="field">
       <label>Max discount (%)</label>
       <input type="number" step="0.1" name="max_discount_percent" min="0" max="100" value="0" required>
-      <p class="field-hint">Largest discount a sales rep may apply on this medicine. Editable later from Manage Stock.</p>
+      <p class="field-hint">Largest discount a sales rep may apply on this medicine. Editable later from a purchase bill or Manage Stock.</p>
     </div>
 
-    <p class="field-hint">Price is set by adding stock — see Manage Stock after saving.</p>
+    <p class="field-hint">Price is set when you receive stock via a vendor purchase bill.</p>
 
     <div class="field">
       <label>Photo (optional)</label>
@@ -94,7 +94,7 @@ function updatePreview() {
   var tablets = parseInt(tabletsInput.value, 10) || 0;
   var files = parseInt(filesInput.value, 10) || 0;
   document.getElementById("box-file-preview").textContent =
-    "1 box = " + files + " files = " + (files * tablets) + " tablets";
+    "1 box = " + files + " strips = " + (files * tablets) + " tablets";
 }
 tabletsInput.addEventListener("input", updatePreview);
 filesInput.addEventListener("input", updatePreview);

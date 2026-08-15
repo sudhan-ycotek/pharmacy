@@ -24,6 +24,25 @@ CREATE TABLE medicine_units (
     UNIQUE(medicine_id, unit_name)
 );
 
+CREATE TABLE vendors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    phone TEXT,
+    address TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE purchase_bills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_id INTEGER NOT NULL REFERENCES vendors(id),
+    bill_date TEXT NOT NULL,
+    vendor_bill_reference TEXT,
+    bill_image_path TEXT,
+    total_amount REAL NOT NULL DEFAULT 0 CHECK(total_amount >= 0),
+    recorded_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE TABLE medicine_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     medicine_id INTEGER NOT NULL REFERENCES medicines(id),
@@ -32,8 +51,20 @@ CREATE TABLE medicine_batches (
     mrp_per_base_unit REAL NOT NULL CHECK(mrp_per_base_unit >= 0),
     quantity_received INTEGER NOT NULL DEFAULT 0,
     quantity_remaining INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    UNIQUE(medicine_id, expiry_date, cost_price_per_base_unit)
+    purchase_bill_id INTEGER REFERENCES purchase_bills(id),
+    cost_currency TEXT NOT NULL DEFAULT 'NPR' CHECK(cost_currency IN ('NPR', 'INR')),
+    cost_price_original REAL NOT NULL CHECK(cost_price_original >= 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE purchase_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_bill_id INTEGER NOT NULL REFERENCES purchase_bills(id),
+    amount REAL NOT NULL CHECK(amount > 0),
+    paid_at TEXT NOT NULL,
+    note TEXT,
+    recorded_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE TABLE sales (

@@ -5,6 +5,8 @@ pharmacy.db
 secret_key.txt
 static/photos/*
 !static/photos/.gitkeep
+static/purchase_bills/*
+!static/purchase_bills/.gitkeep
 .pytest_cache/
 build/
 dist/

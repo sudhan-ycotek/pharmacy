@@ -1,6 +1,6 @@
 import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
 from auth import role_required
 from db import get_db
@@ -113,7 +113,14 @@ def search_medicines(query):
     ).fetchall()
 
 
-def add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit, mrp_per_base_unit):
+def insert_batch(db, medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit,
+                  mrp_per_base_unit, purchase_bill_id=None, cost_currency="NPR", cost_price_original=None):
+    """Validate and INSERT one new batch row, bumping medicines.stock_in_base_units.
+
+    Does not commit -- callers that insert several batches in one purchase bill
+    control the transaction boundary themselves, the same way create_sale()
+    commits once after writing every line item.
+    """
     if isinstance(quantity, bool) or not isinstance(quantity, int):
         raise ValueError("quantity must be a whole number")
     if quantity <= 0:
@@ -124,7 +131,6 @@ def add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base
         raise ValueError("MRP must be a non-negative number")
     expiry = _parse_future_expiry(expiry_date)
 
-    db = get_db()
     unit_row = db.execute(
         "SELECT qty_in_base_units FROM medicine_units WHERE medicine_id = ? AND unit_name = ?",
         (medicine_id, unit_name),
@@ -135,25 +141,30 @@ def add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base
     base_units_added = unit_row["qty_in_base_units"] * quantity
     cost_price_per_base_unit = round(cost_price_per_base_unit, 2)
     mrp_per_base_unit = round(mrp_per_base_unit, 2)
+    if cost_price_original is None:
+        cost_price_original = cost_price_per_base_unit
 
-    db.execute(
+    cur = db.execute(
         """
         INSERT INTO medicine_batches
             (medicine_id, expiry_date, cost_price_per_base_unit, mrp_per_base_unit,
-             quantity_received, quantity_remaining)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(medicine_id, expiry_date, cost_price_per_base_unit) DO UPDATE SET
-            quantity_received = quantity_received + excluded.quantity_received,
-            quantity_remaining = quantity_remaining + excluded.quantity_remaining,
-            mrp_per_base_unit = excluded.mrp_per_base_unit
+             quantity_received, quantity_remaining, purchase_bill_id, cost_currency, cost_price_original)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (medicine_id, expiry, cost_price_per_base_unit, mrp_per_base_unit,
-         base_units_added, base_units_added),
+         base_units_added, base_units_added, purchase_bill_id, cost_currency, round(cost_price_original, 2)),
     )
     db.execute(
         "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
         (base_units_added, medicine_id),
     )
+    return cur.lastrowid
+
+
+def add_stock(medicine_id, unit_name, quantity, expiry_date, cost_price_per_base_unit, mrp_per_base_unit):
+    db = get_db()
+    insert_batch(db, medicine_id, unit_name, quantity, expiry_date,
+                 cost_price_per_base_unit, mrp_per_base_unit)
     db.commit()
     return db.execute(
         "SELECT stock_in_base_units FROM medicines WHERE id = ?", (medicine_id,)
@@ -194,10 +205,15 @@ def remove_stock(batch_id, unit_name, quantity):
 
 def list_batches(medicine_id, only_available=True):
     db = get_db()
-    query = "SELECT * FROM medicine_batches WHERE medicine_id = ?"
+    query = (
+        "SELECT mb.*, v.name AS vendor_name FROM medicine_batches mb "
+        "LEFT JOIN purchase_bills pb ON pb.id = mb.purchase_bill_id "
+        "LEFT JOIN vendors v ON v.id = pb.vendor_id "
+        "WHERE mb.medicine_id = ?"
+    )
     if only_available:
-        query += " AND quantity_remaining > 0"
-    query += " ORDER BY expiry_date ASC"
+        query += " AND mb.quantity_remaining > 0"
+    query += " ORDER BY mb.expiry_date ASC"
     return db.execute(query, (medicine_id,)).fetchall()
 
 
@@ -230,7 +246,51 @@ def recent_batches(days=7):
 def low_stock_medicines():
     db = get_db()
     return db.execute(
-        "SELECT * FROM medicines WHERE stock_in_base_units < low_stock_threshold ORDER BY name"
+        """
+        SELECT m.*,
+               (SELECT MAX(mb.created_at) FROM medicine_batches mb
+                WHERE mb.medicine_id = m.id) AS last_restock
+        FROM medicines m
+        WHERE m.stock_in_base_units < m.low_stock_threshold
+        ORDER BY m.name
+        """
+    ).fetchall()
+
+
+def daily_stock_received(days=7):
+    db = get_db()
+    return db.execute(
+        "SELECT date(created_at) AS day, COALESCE(SUM(quantity_received), 0) AS received "
+        "FROM medicine_batches "
+        f"WHERE date(created_at) >= date('now', 'localtime', '-{days} days') "
+        "GROUP BY day"
+    ).fetchall()
+
+
+def total_stock_units():
+    db = get_db()
+    return db.execute(
+        "SELECT COALESCE(SUM(stock_in_base_units), 0) AS total FROM medicines"
+    ).fetchone()["total"]
+
+
+def stock_received_this_month():
+    db = get_db()
+    return db.execute(
+        "SELECT COALESCE(SUM(quantity_received), 0) AS total FROM medicine_batches "
+        "WHERE date(created_at) >= date('now', 'localtime', 'start of month')"
+    ).fetchone()["total"]
+
+
+def expiring_soon_batches(days=30):
+    db = get_db()
+    return db.execute(
+        "SELECT mb.*, m.name AS medicine_name FROM medicine_batches mb "
+        "JOIN medicines m ON m.id = mb.medicine_id "
+        "WHERE mb.quantity_remaining > 0 "
+        "AND mb.expiry_date >= date('now', 'localtime') "
+        f"AND mb.expiry_date <= date('now', 'localtime', '+{days} days') "
+        "ORDER BY mb.expiry_date ASC"
     ).fetchall()
 
 
@@ -318,12 +378,7 @@ def add_stock_view(medicine_id):
                     int(request.form["quantity"]),
                 )
             else:
-                add_stock(
-                    medicine_id, request.form["unit_name"], int(request.form["quantity"]),
-                    request.form["expiry_date"],
-                    float(request.form["cost_price_per_base_unit"]),
-                    float(request.form["mrp_per_base_unit"]),
-                )
+                raise ValueError("unknown action — stock is now received via a vendor purchase bill")
             return redirect(url_for("inventory.add_stock_view", medicine_id=medicine_id))
         except ValueError as e:
             flash(str(e))
@@ -333,3 +388,13 @@ def add_stock_view(medicine_id):
         "add_stock.html", medicine=medicine, units=get_medicine_units(medicine_id),
         batches=list_batches(medicine_id, only_available=False),
     )
+
+
+@bp.route("/<int:medicine_id>/max-discount", methods=["POST"])
+@role_required("admin")
+def update_max_discount_ajax(medicine_id):
+    try:
+        update_max_discount(medicine_id, float(request.json["max_discount_percent"]))
+    except (ValueError, KeyError, TypeError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"max_discount_percent": get_medicine(medicine_id)["max_discount_percent"]})

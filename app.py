@@ -11,8 +11,10 @@ import dashboard
 import db as db_module
 import inventory
 import photos
+import purchases
 import sales
 import users
+import vendors
 
 if getattr(sys, "frozen", False):
     # Running as a PyInstaller-built exe: bundled resources (templates, schema.sql,
@@ -72,8 +74,10 @@ def create_app(test_config=None):
     app.register_blueprint(dashboard.bp)
     app.register_blueprint(inventory.bp)
     app.register_blueprint(photos.bp)
+    app.register_blueprint(purchases.bp)
     app.register_blueprint(sales.bp)
     app.register_blueprint(users.bp)
+    app.register_blueprint(vendors.bp)
     app.cli.add_command(auth.init_admin_command)
     app.cli.add_command(auth.reset_admin_password_command)
 

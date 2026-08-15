@@ -190,6 +190,28 @@ def void_sale(sale_id):
     db.commit()
 
 
+def daily_sales_totals(days=7):
+    db = get_db()
+    return db.execute(
+        """
+        SELECT date(s.timestamp) AS day,
+               COALESCE(SUM(s.total), 0) AS revenue,
+               COALESCE(SUM(si.qty), 0) AS items_sold,
+               COALESCE(SUM(si.profit), 0) AS profit
+        FROM sales s
+        LEFT JOIN (
+            SELECT sale_id,
+                   SUM(qty_in_base_units * quantity) AS qty,
+                   SUM(subtotal - cost_price_per_base_unit * qty_in_base_units * quantity) AS profit
+            FROM sale_items GROUP BY sale_id
+        ) si ON si.sale_id = s.id
+        WHERE s.voided = 0 AND date(s.timestamp) >= date('now', 'localtime', ?)
+        GROUP BY day
+        """,
+        (f"-{days} days",),
+    ).fetchall()
+
+
 def today_sales_total():
     db = get_db()
     row = db.execute(

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block page_title %}{{ vendor['name'] }}{% endblock %}
+{% block page_desc %}Vendor contact info and purchase history.{% endblock %}
+{% block content %}
+<div class="card panel">
+  <p class="panel-desc">Phone: {{ vendor['phone'] or '—' }} · Address: {{ vendor['address'] or '—' }}</p>
+  <div class="stat-row" style="margin-top:14px">
+    <div class="card stat-card">
+      <div class="label">Total Billed</div>
+      <div class="value">Rs {{ "%.2f"|format(balance['total_billed']) }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="label">Total Paid</div>
+      <div class="value">Rs {{ "%.2f"|format(balance['total_paid']) }}</div>
+    </div>
+    <div class="card stat-card {{ 'alert' if balance['total_due'] > 0 }}">
+      <div class="label">Total Due</div>
+      <div class="value">Rs {{ "%.2f"|format(balance['total_due']) }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-head" style="margin-bottom:14px">
+  <div></div>
+  <a href="{{ url_for('purchases.new_purchase_bill_view', vendor_id=vendor['id']) }}" class="btn btn-primary">+ New Purchase Bill</a>
+</div>
+
+<div class="card panel">
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Date</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Due</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for b in bills %}
+      <tr>
+        <td>{{ b['bill_date'] }}</td>
+        <td class="num">Rs {{ "%.2f"|format(b['total_amount']) }}</td>
+        <td class="num">Rs {{ "%.2f"|format(b['total_paid']) }}</td>
+        <td class="num">Rs {{ "%.2f"|format(b['amount_due']) }}</td>
+        <td>
+          {% if b['amount_due'] <= 0 %}
+          <span class="badge good">Paid</span>
+          {% elif b['total_paid'] > 0 %}
+          <span class="badge warn">Partial</span>
+          {% else %}
+          <span class="badge critical">Unpaid</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('purchases.purchase_bill_detail_view', purchase_bill_id=b['id']) }}" class="btn btn-secondary btn-icon">Bill →</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not bills %}
+  <p class="panel-desc">No purchases recorded yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

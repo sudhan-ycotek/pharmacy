@@ -19,7 +19,7 @@
       {% for item in items %}
       <tr>
         <td>{{ item['medicine_name'] }}</td>
-        <td>{{ item['unit_name'] }}</td>
+        <td>{{ item['unit_name']|replace('File','Strip') }}</td>
         <td>{{ item['batch_expiry_date'] }}</td>
         <td class="num">{{ item['quantity'] }}</td>
         <td class="num">{{ "%.2f"|format(item['unit_price']) }}</td>

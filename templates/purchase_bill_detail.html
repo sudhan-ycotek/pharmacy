@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block page_title %}Purchase Bill #{{ bill['id'] }}{% endblock %}
+{% block page_desc %}From {{ bill['vendor_name'] }}, dated {{ bill['bill_date'] }}.{% endblock %}
+{% block content %}
+<div class="card panel">
+  <a href="{{ url_for('vendors.vendor_detail_view', vendor_id=bill['vendor_id']) }}">{{ bill['vendor_name'] }}</a>
+  {% if amount_due <= 0 %}
+  <span class="badge good">Paid</span>
+  {% elif total_paid > 0 %}
+  <span class="badge warn">Partial</span>
+  {% else %}
+  <span class="badge critical">Unpaid</span>
+  {% endif %}
+  {% if bill['vendor_bill_reference'] %}
+  <p class="panel-desc">Vendor bill reference: {{ bill['vendor_bill_reference'] }}</p>
+  {% endif %}
+
+  <div class="stat-row" style="margin-top:14px">
+    <div class="card stat-card">
+      <div class="label">Total</div>
+      <div class="value">Rs {{ "%.2f"|format(bill['total_amount']) }}</div>
+    </div>
+    <div class="card stat-card">
+      <div class="label">Paid</div>
+      <div class="value">Rs {{ "%.2f"|format(total_paid) }}</div>
+    </div>
+    <div class="card stat-card {{ 'alert' if amount_due > 0 }}">
+      <div class="label">Due</div>
+      <div class="value">Rs {{ "%.2f"|format(amount_due) }}</div>
+    </div>
+  </div>
+
+  {% if bill['bill_image_path'] %}
+  <a href="{{ url_for('static', filename=bill['bill_image_path']) }}" target="_blank">
+    <img class="bill-image-preview" src="{{ url_for('static', filename=bill['bill_image_path']) }}" alt="Bill image">
+  </a>
+  {% endif %}
+</div>
+
+<div class="card panel">
+  <h2>Line Items</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Medicine</th><th>Expiry</th><th class="num">Received</th><th class="num">Cost/unit</th><th class="num">MRP/unit</th></tr></thead>
+      <tbody>
+      {% for b in batches %}
+      <tr>
+        <td>{{ b['medicine_name'] }}</td>
+        <td>{{ b['expiry_date'] }}</td>
+        <td class="num">{{ b['quantity_received'] }}</td>
+        <td class="num">
+          {% if b['cost_currency'] == 'INR' %}
+          ₹{{ "%.2f"|format(b['cost_price_original']) }} <span class="med-sub">(Rs {{ "%.2f"|format(b['cost_price_per_base_unit']) }})</span>
+          {% else %}
+          Rs {{ "%.2f"|format(b['cost_price_per_base_unit']) }}
+          {% endif %}
+        </td>
+        <td class="num">Rs {{ "%.2f"|format(b['mrp_per_base_unit']) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Payments</h2>
+      <p class="panel-desc">Money paid to this vendor against this bill.</p>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="openModal('add-payment-modal')">+ Add Payment</button>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for p in payments %}
+      <tr>
+        <td>{{ p['paid_at'] }}</td>
+        <td class="num">Rs {{ "%.2f"|format(p['amount']) }}</td>
+        <td>{{ p['note'] or '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not payments %}
+  <p class="panel-desc">No payments recorded yet.</p>
+  {% endif %}
+</div>
+
+<div class="modal-backdrop" id="add-payment-modal">
+  <div class="modal">
+    <h3>Add Payment</h3>
+    <form method="post" action="{{ url_for('purchases.add_payment_view', purchase_bill_id=bill['id']) }}" class="styled-form">
+      <div class="field">
+        <label>Amount (due: Rs {{ "%.2f"|format(amount_due) }})</label>
+        <input type="number" name="amount" min="0.01" step="0.01" max="{{ amount_due }}" required autofocus>
+      </div>
+      <div class="field">
+        <label>Date paid</label>
+        <input type="date" name="paid_at" required>
+      </div>
+      <div class="field">
+        <label>Note (optional)</label>
+        <input type="text" name="note">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('add-payment-modal')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add Payment</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,7 +1,7 @@
 import pytest
 
 from inventory import get_batch, get_medicine
-from sales import create_sale, get_sale, list_sales, today_sales_total, void_sale
+from sales import create_sale, daily_sales_totals, get_sale, list_sales, today_sales_total, void_sale
 from helpers import make_batch, make_box_file_medicine
 
 
@@ -508,3 +508,38 @@ def test_medicine_batches_route_excludes_depleted_batches(admin_client, app):
         remove_stock(batch_id, "Tablet", 1)
     response = admin_client.get(f"/sales/batches/{medicine_id}?unit_name=Tablet")
     assert response.get_json() == []
+
+
+def test_daily_sales_totals_aggregates_revenue_items_profit(app):
+    medicine_id, batch_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("cashier1", "pw", "staff")
+        create_sale(user_id, [
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "batch_id": batch_id, "quantity": 4},
+        ])
+        rows = daily_sales_totals(days=7)
+        assert len(rows) == 1
+        # MRP 2.5/base unit, cost 1.0/base unit, 4 tablets: revenue=10.0, items=4, profit=6.0
+        assert rows[0]["revenue"] == pytest.approx(10.0)
+        assert rows[0]["items_sold"] == 4
+        assert rows[0]["profit"] == pytest.approx(6.0)
+
+
+def test_daily_sales_totals_excludes_voided_sales(app):
+    medicine_id, batch_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("cashier1", "pw", "staff")
+        result = create_sale(user_id, [
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "batch_id": batch_id, "quantity": 4},
+        ])
+        void_sale(result["sale_id"])
+        rows = daily_sales_totals(days=7)
+        assert rows == []
+
+
+def test_daily_sales_totals_only_returns_days_with_sales(app):
+    with app.app_context():
+        rows = daily_sales_totals(days=7)
+        assert rows == []

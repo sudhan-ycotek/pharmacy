@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block page_title %}New Purchase Bill{% endblock %}
+{% block page_desc %}Record a delivery from a vendor — add every medicine on the bill, then finalize.{% endblock %}
+{% block content %}
+<div class="card panel">
+  <div class="field-row">
+    <div class="field">
+      <label>Vendor</label>
+      <select id="vendor-select">
+        <option value="">Select a vendor…</option>
+        {% for v in vendors %}
+        <option value="{{ v['id'] }}" {{ "selected" if preselected_vendor_id == v['id'] }}>{{ v['name'] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button type="button" class="btn btn-secondary" onclick="openModal('new-vendor-modal')">+ New Vendor</button>
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label>Bill date</label>
+      <input type="date" id="bill-date-input">
+    </div>
+    <div class="field">
+      <label>Vendor bill reference (optional)</label>
+      <input type="text" id="bill-reference-input" placeholder="e.g. invoice number">
+    </div>
+  </div>
+
+  <div class="search-box" style="margin-top:8px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    <input type="text" id="search-box" placeholder="Search medicine by name…" autocomplete="off">
+  </div>
+  <div id="search-results" class="search-results"></div>
+</div>
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Line Items</h2>
+      <p class="panel-desc">Every medicine received on this bill.</p>
+    </div>
+  </div>
+  <div id="bill-error" class="banner-error" style="display:none"></div>
+
+  <div class="table-scroll">
+    <table id="items-table">
+      <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Qty</th><th>Expiry</th><th class="num">Cost</th><th class="num">MRP</th><th class="num">Max Discount %</th><th class="num">Line Total</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="bill-total-row">Bill Total: <span class="num" id="bill-total">Rs 0.00</span></div>
+
+  <div class="field-row" style="margin-top:14px">
+    <div class="field">
+      <label>Bill image (optional)</label>
+      <input type="file" id="bill-image-input" accept="image/*">
+    </div>
+    <div class="field">
+      <label>Amount paid so far (optional)</label>
+      <input type="number" id="paid-amount-input" min="0" step="0.01" placeholder="0.00">
+    </div>
+  </div>
+
+  <button type="button" id="finalize-btn" class="btn btn-primary">Finalize Purchase Bill</button>
+</div>
+
+<div class="modal-backdrop" id="new-vendor-modal">
+  <div class="modal">
+    <h3>New Vendor</h3>
+    <div id="new-vendor-error"></div>
+    <form class="styled-form" onsubmit="return false;">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="new-vendor-name" required>
+      </div>
+      <div class="field">
+        <label>Phone</label>
+        <input type="text" id="new-vendor-phone">
+      </div>
+      <div class="field">
+        <label>Address</label>
+        <input type="text" id="new-vendor-address">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('new-vendor-modal')">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitNewVendor()">Add Vendor</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="item-modal">
+  <div class="modal modal-lg">
+    <h3 id="item-modal-title">Add to bill</h3>
+    <div id="item-modal-error" class="banner-error" style="display:none"></div>
+    <div class="field">
+      <label>Unit</label>
+      <div class="unit-toggle" id="item-unit-toggle"></div>
+    </div>
+    <div class="field">
+      <label>Quantity</label>
+      <input type="number" id="item-qty-input" min="1" value="1">
+    </div>
+    <div class="field">
+      <label>Expiry date</label>
+      <input type="date" id="item-expiry-input">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Cost price per <span id="item-cost-unit-label">unit</span></label>
+        <div class="unit-toggle" id="item-currency-toggle">
+          <button type="button" class="btn btn-secondary selected" data-currency="NPR">NPR</button>
+          <button type="button" class="btn btn-secondary" data-currency="INR">INR</button>
+        </div>
+        <input type="number" id="item-cost-input" min="0" step="0.01">
+        <p class="form-preview" id="item-cost-preview" style="display:none"></p>
+      </div>
+      <div class="field">
+        <label>MRP per <span id="item-mrp-unit-label">unit</span></label>
+        <input type="number" id="item-mrp-input" min="0" step="0.01">
+      </div>
+    </div>
+    <div class="field">
+      <label>Max discount % for this medicine</label>
+      <input type="number" id="item-max-discount-input" min="0" max="100" step="0.1">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('item-modal')">Cancel</button>
+      <button type="button" class="btn btn-primary" id="item-confirm-btn">Add to bill</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+var INR_TO_NPR_RATE = 1.60;
+var vendorSelect = document.getElementById("vendor-select");
+var items = [];
+var currentResults = [];
+var activeMedicine = null;
+var activeUnitIndex = 0;
+var activeCurrency = "NPR";
+
+function displayUnitName(name) { return name === "File" ? "Strip" : name; }
+
+var searchInput = document.getElementById("search-box");
+var resultsBox = document.getElementById("search-results");
+
+function renderResults() {
+  resultsBox.innerHTML = "";
+  currentResults.forEach(function (m, i) {
+    var row = document.createElement("div");
+    row.className = "search-result";
+    var infoDiv = document.createElement("div");
+    var nameDiv = document.createElement("div");
+    nameDiv.className = "med-name";
+    nameDiv.textContent = m.name;
+    infoDiv.appendChild(nameDiv);
+    row.appendChild(infoDiv);
+    row.addEventListener("click", function () { selectMedicine(i); });
+    resultsBox.appendChild(row);
+  });
+}
+
+function selectMedicine(index) {
+  activeMedicine = currentResults[index];
+  activeUnitIndex = 0;
+  activeCurrency = "NPR";
+  if (!activeMedicine || activeMedicine.units.length === 0) { return; }
+  document.getElementById("item-modal-title").textContent = "Add " + activeMedicine.name;
+  document.getElementById("item-modal-error").style.display = "none";
+  document.getElementById("item-qty-input").value = 1;
+  document.getElementById("item-expiry-input").value = "";
+  document.getElementById("item-cost-input").value = "";
+  document.getElementById("item-mrp-input").value = "";
+  document.getElementById("item-max-discount-input").value = activeMedicine.max_discount_percent;
+  document.querySelectorAll("#item-currency-toggle button").forEach(function (b) {
+    b.classList.toggle("selected", b.dataset.currency === "NPR");
+  });
+  renderUnitToggle();
+  updateCostPreview();
+  openModal("item-modal");
+}
+
+function renderUnitToggle() {
+  var toggle = document.getElementById("item-unit-toggle");
+  toggle.innerHTML = "";
+  activeMedicine.units.forEach(function (u, i) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-secondary" + (i === activeUnitIndex ? " selected" : "");
+    btn.textContent = displayUnitName(u.unit_name);
+    btn.addEventListener("click", function () { activeUnitIndex = i; renderUnitToggle(); updateUnitLabels(); });
+    toggle.appendChild(btn);
+  });
+  updateUnitLabels();
+}
+
+function updateUnitLabels() {
+  var unitName = displayUnitName(activeMedicine.units[activeUnitIndex].unit_name);
+  document.getElementById("item-cost-unit-label").textContent = unitName;
+  document.getElementById("item-mrp-unit-label").textContent = unitName;
+}
+
+function updateCostPreview() {
+  var preview = document.getElementById("item-cost-preview");
+  var value = parseFloat(document.getElementById("item-cost-input").value);
+  if (activeCurrency === "INR" && value) {
+    preview.style.display = "block";
+    preview.textContent = "= Rs " + (value * INR_TO_NPR_RATE).toFixed(2) + " NPR";
+  } else {
+    preview.style.display = "none";
+  }
+}
+document.getElementById("item-cost-input").addEventListener("input", updateCostPreview);
+document.querySelectorAll("#item-currency-toggle button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    activeCurrency = btn.dataset.currency;
+    document.querySelectorAll("#item-currency-toggle button").forEach(function (b) {
+      b.classList.toggle("selected", b === btn);
+    });
+    updateCostPreview();
+  });
+});
+
+searchInput.addEventListener("input", function (e) {
+  var q = e.target.value;
+  if (!q) { currentResults = []; renderResults(); return; }
+  fetch("/purchases/medicines/search?q=" + encodeURIComponent(q))
+    .then(function (r) { return r.json(); })
+    .then(function (medicines) {
+      currentResults = medicines.filter(function (m) { return m.units.length > 0; });
+      renderResults();
+    });
+});
+
+function confirmAddItem() {
+  var errorBox = document.getElementById("item-modal-error");
+  var quantity = parseInt(document.getElementById("item-qty-input").value, 10);
+  var expiryDate = document.getElementById("item-expiry-input").value;
+  var costPrice = parseFloat(document.getElementById("item-cost-input").value);
+  var mrp = parseFloat(document.getElementById("item-mrp-input").value);
+  var maxDiscountPercent = parseFloat(document.getElementById("item-max-discount-input").value);
+  if (!quantity || quantity <= 0 || !expiryDate || isNaN(costPrice) || isNaN(mrp)) {
+    errorBox.textContent = "Fill in quantity, expiry date, cost, and MRP.";
+    errorBox.style.display = "block";
+    return;
+  }
+  var unit = activeMedicine.units[activeUnitIndex];
+  items.push({
+    medicine_id: activeMedicine.id, name: activeMedicine.name, unit_name: unit.unit_name,
+    quantity: quantity, expiry_date: expiryDate, cost_price_original: costPrice,
+    cost_currency: activeCurrency, cost_price_per_base_unit: activeCurrency === "INR" ? costPrice * INR_TO_NPR_RATE : costPrice,
+    mrp_per_base_unit: mrp, max_discount_percent: isNaN(maxDiscountPercent) ? null : maxDiscountPercent,
+  });
+  renderItems();
+  closeModal("item-modal");
+  searchInput.value = "";
+  currentResults = [];
+  renderResults();
+}
+document.getElementById("item-confirm-btn").addEventListener("click", confirmAddItem);
+
+function renderItems() {
+  var tbody = document.querySelector("#items-table tbody");
+  tbody.innerHTML = "";
+  var total = 0;
+  items.forEach(function (item, i) {
+    var lineTotal = item.cost_price_per_base_unit * item.quantity;
+    total += lineTotal;
+    var row = tbody.insertRow();
+    row.insertCell(0).textContent = item.name;
+    row.insertCell(1).textContent = displayUnitName(item.unit_name);
+    row.insertCell(2).className = "num";
+    row.cells[2].textContent = item.quantity;
+    row.insertCell(3).textContent = item.expiry_date;
+    var costCell = row.insertCell(4);
+    costCell.className = "num";
+    costCell.textContent = item.cost_currency === "INR"
+      ? "₹" + item.cost_price_original.toFixed(2) + " (Rs " + item.cost_price_per_base_unit.toFixed(2) + ")"
+      : "Rs " + item.cost_price_original.toFixed(2);
+    row.insertCell(5).className = "num";
+    row.cells[5].textContent = item.mrp_per_base_unit.toFixed(2);
+    row.insertCell(6).className = "num";
+    row.cells[6].textContent = item.max_discount_percent === null ? "—" : item.max_discount_percent;
+    row.insertCell(7).className = "num";
+    row.cells[7].textContent = lineTotal.toFixed(2);
+    var removeCell = row.insertCell(8);
+    var removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn btn-secondary btn-icon";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", function () { items.splice(i, 1); renderItems(); });
+    removeCell.appendChild(removeBtn);
+  });
+  document.getElementById("bill-total").textContent = "Rs " + total.toFixed(2);
+}
+
+function submitNewVendor() {
+  var errorBox = document.getElementById("new-vendor-error");
+  errorBox.innerHTML = "";
+  var name = document.getElementById("new-vendor-name").value.trim();
+  if (!name) { return; }
+  fetch("/vendors", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      name: name,
+      phone: document.getElementById("new-vendor-phone").value,
+      address: document.getElementById("new-vendor-address").value,
+    }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.error) {
+        errorBox.innerHTML = '<div class="banner-error">' + data.error + '</div>';
+        return;
+      }
+      var opt = document.createElement("option");
+      opt.value = data.id;
+      opt.textContent = data.name;
+      vendorSelect.appendChild(opt);
+      vendorSelect.value = data.id;
+      closeModal("new-vendor-modal");
+    });
+}
+
+function finalizeBill() {
+  var errorBox = document.getElementById("bill-error");
+  errorBox.style.display = "none";
+  if (!vendorSelect.value) {
+    errorBox.textContent = "Select or add a vendor.";
+    errorBox.style.display = "block";
+    return;
+  }
+  if (items.length === 0) {
+    errorBox.textContent = "Add at least one medicine to the bill.";
+    errorBox.style.display = "block";
+    return;
+  }
+  var formData = new FormData();
+  formData.append("vendor_id", vendorSelect.value);
+  formData.append("bill_date", document.getElementById("bill-date-input").value);
+  formData.append("vendor_bill_reference", document.getElementById("bill-reference-input").value);
+  var paidAmount = document.getElementById("paid-amount-input").value;
+  if (paidAmount) { formData.append("paid_amount", paidAmount); }
+  var billImage = document.getElementById("bill-image-input").files[0];
+  if (billImage) { formData.append("bill_image", billImage); }
+  formData.append("items_json", JSON.stringify(items.map(function (i) {
+    return {
+      medicine_id: i.medicine_id, unit_name: i.unit_name, quantity: i.quantity,
+      expiry_date: i.expiry_date, cost_price_original: i.cost_price_original,
+      cost_currency: i.cost_currency, mrp_per_base_unit: i.mrp_per_base_unit,
+      max_discount_percent: i.max_discount_percent,
+    };
+  })));
+
+  fetch("/purchases", { method: "POST", body: formData })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.error) {
+        errorBox.textContent = data.error;
+        errorBox.style.display = "block";
+        return;
+      }
+      window.location = "/purchases/" + data.purchase_bill_id;
+    });
+}
+document.getElementById("finalize-btn").addEventListener("click", finalizeBill);
+</script>
+{% endblock %}
