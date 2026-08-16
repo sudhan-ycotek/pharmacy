@@ -386,6 +386,73 @@ def stock_received_this_month():
     ).fetchone()["total"]
 
 
+def stock_balance_as_of(as_of_date, price_basis="cost"):
+    """Reconstruct every medicine's stock quantity as of a given date and value it
+    at the medicine's *current* cost or MRP.
+
+    The quantity is a signed-delta reconstruction across every stock-moving table
+    (stock_receipts +, stock_adjustments +/-, sale_items -, purchase_return_items -,
+    sale_return_items +) via one UNION ALL + GROUP BY -- not read from
+    medicines.stock_in_base_units, which only ever reflects "now". Each branch is
+    filtered to its own date column being on/before as_of_date, so an earlier
+    as_of_date naturally excludes later activity; voided sales/purchase returns/
+    sale returns are excluded via WHERE ... = 0 on the tables that actually carry
+    a voided flag (stock_receipts and stock_adjustments have none). Medicines with
+    no matching activity still appear (at balance 0) via the LEFT JOIN onto
+    medicines.
+
+    Valuation always uses the medicine's *current* cost_price_per_base_unit or
+    mrp_per_base_unit -- a historical per-date cost isn't reconstructable without
+    true batch (FIFO) consumption tracking, which this system intentionally does
+    not implement. This is a deliberate scope limit, not a bug.
+    """
+    if price_basis not in ("cost", "mrp"):
+        raise ValueError("price_basis must be 'cost' or 'mrp'")
+    price_column = "cost_price_per_base_unit" if price_basis == "cost" else "mrp_per_base_unit"
+
+    db = get_db()
+    return db.execute(
+        f"""
+        SELECT m.id AS medicine_id, m.name, m.packaging_type,
+               m.{price_column} AS unit_price,
+               COALESCE(SUM(delta.units), 0) AS balance,
+               COALESCE(SUM(delta.units), 0) * m.{price_column} AS value
+        FROM medicines m
+        LEFT JOIN (
+            SELECT medicine_id, base_units_received AS units
+            FROM stock_receipts
+            WHERE date(created_at) <= ?
+
+            UNION ALL
+            SELECT medicine_id, base_units_delta AS units
+            FROM stock_adjustments
+            WHERE date(created_at) <= ?
+
+            UNION ALL
+            SELECT si.medicine_id, -(si.qty_in_base_units * si.quantity) AS units
+            FROM sale_items si
+            JOIN sales s ON s.id = si.sale_id
+            WHERE s.voided = 0 AND date(s.timestamp) <= ?
+
+            UNION ALL
+            SELECT pri.medicine_id, -pri.base_units_returned AS units
+            FROM purchase_return_items pri
+            JOIN purchase_returns pr ON pr.id = pri.purchase_return_id
+            WHERE pr.voided = 0 AND date(pr.return_date) <= ?
+
+            UNION ALL
+            SELECT sri.medicine_id, sri.base_units_returned AS units
+            FROM sale_return_items sri
+            JOIN sale_returns sr ON sr.id = sri.sale_return_id
+            WHERE sr.voided = 0 AND date(sr.return_date) <= ?
+        ) delta ON delta.medicine_id = m.id
+        GROUP BY m.id
+        ORDER BY m.name
+        """,
+        (as_of_date, as_of_date, as_of_date, as_of_date, as_of_date),
+    ).fetchall()
+
+
 def unit_prices(medicine_id):
     medicine = get_medicine(medicine_id)
     result = []
@@ -545,3 +612,25 @@ def update_max_discount_ajax(medicine_id):
     except (ValueError, KeyError, TypeError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"max_discount_percent": get_medicine(medicine_id)["max_discount_percent"]})
+
+
+@bp.route("/stock-balance")
+@role_required("admin")
+def stock_balance_view():
+    as_of_date = request.args.get("as_of_date") or datetime.date.today().isoformat()
+    try:
+        datetime.date.fromisoformat(as_of_date)
+    except ValueError:
+        flash("Invalid date -- showing today's balance instead")
+        as_of_date = datetime.date.today().isoformat()
+
+    price_basis = request.args.get("price_basis") or "cost"
+    if price_basis not in ("cost", "mrp"):
+        price_basis = "cost"
+
+    rows = stock_balance_as_of(as_of_date, price_basis=price_basis)
+    total_value = round(sum(r["value"] for r in rows), 2)
+    return render_template(
+        "stock_balance.html", rows=rows, as_of_date=as_of_date, price_basis=price_basis,
+        total_value=total_value,
+    )

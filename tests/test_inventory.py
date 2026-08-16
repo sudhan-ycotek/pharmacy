@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 
 from inventory import (
@@ -19,6 +21,7 @@ from inventory import (
     search_medicines,
     sellable_units,
     set_medicine_photo,
+    stock_balance_as_of,
     stock_received_this_month,
     total_stock_units,
     unit_prices,
@@ -874,3 +877,232 @@ def test_edit_medicine_view_post_rejects_packaging_change_after_stock_history(ap
     with app.app_context():
         units = {u["unit_name"]: u for u in get_medicine_units(medicine_id)}
         assert units["File"]["qty_in_base_units"] == 20
+
+
+# --- stock_balance_as_of ---------------------------------------------------
+
+def test_stock_balance_as_of_today_matches_live_counter_for_mixed_activity(app):
+    """The core invariant: reconstructing today's balance from every stock-moving
+    table (receipts, adjustments, purchase returns, sales, sale returns) must land
+    on exactly the same number as medicines.stock_in_base_units -- a much stronger
+    check than hand-computing an expected total."""
+    with app.app_context():
+        from auth import create_user
+        from purchases import create_purchase_bill, create_purchase_return
+        from sales import create_sale, create_sale_return, get_sale
+        from vendors import add_vendor
+
+        user_id = create_user("admin1", "pw", "admin")
+        vendor_id = add_vendor("ABC Vendors")
+
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        # A second medicine with zero activity -- must still show up (at balance 0)
+        # via the LEFT JOIN onto medicines.
+        untouched_id = make_bottled_medicine(name="Cough Syrup")
+
+        # Manual restock, then a damage adjustment.
+        add_stock(medicine_id, "Box", 10, 1.0, 2.0)  # +2400 base units
+        record_stock_adjustment(medicine_id, "Box", 2, "decrease", "damaged", user_id)  # -480
+
+        # A vendor purchase, then a partial purchase return.
+        bill = create_purchase_bill(user_id, vendor_id, "2026-08-01", [{
+            "medicine_id": medicine_id, "unit_name": "Box", "quantity": 5,
+            "cost_price_original": 1.0, "mrp_original": 2.0,
+        }])  # +1200
+        create_purchase_return(
+            bill["purchase_bill_id"],
+            [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 1}],
+            "damaged", user_id,
+        )  # -240
+
+        # A sale, then a partial sale return.
+        sale = create_sale(user_id, [
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 100},
+        ])  # -100
+        sale_item_id = get_sale(sale["sale_id"])["items"][0]["id"]
+        create_sale_return(
+            sale["sale_id"], [{"sale_item_id": sale_item_id, "quantity": 20}], "wrong_item", user_id,
+        )  # +20
+
+        live_balance = get_medicine(medicine_id)["stock_in_base_units"]
+        today = datetime.date.today().isoformat()
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+
+        assert rows[medicine_id]["balance"] == live_balance
+        assert rows[untouched_id]["balance"] == 0
+
+
+def test_stock_balance_as_of_excludes_activity_after_the_as_of_date(app):
+    """Backdate one receipt into the past via raw SQL, add a second receipt dated
+    'today', then confirm an as-of date before the backdated receipt shows a lower
+    (zero) balance, a date between the two includes only the backdated one, and
+    'today' includes both -- proving later activity is excluded relative to the
+    chosen as-of date, not just relative to a rolling window."""
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 3, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+        db = get_db()
+        backdated_id = db.execute(
+            "SELECT id FROM stock_receipts WHERE medicine_id = ?", (medicine_id,)
+        ).fetchone()["id"]
+        db.execute(
+            "UPDATE stock_receipts SET created_at = datetime('now', 'localtime', '-10 days') WHERE id = ?",
+            (backdated_id,),
+        )
+        db.commit()
+
+        # The later activity that must be excluded by an earlier as-of date.
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.0)
+
+        as_of_before = (datetime.date.today() - datetime.timedelta(days=20)).isoformat()
+        as_of_between = (datetime.date.today() - datetime.timedelta(days=5)).isoformat()
+        as_of_today = datetime.date.today().isoformat()
+
+        def balance(as_of):
+            rows = {r["medicine_id"]: r for r in stock_balance_as_of(as_of)}
+            return rows[medicine_id]["balance"]
+
+        assert balance(as_of_before) == 0
+        assert balance(as_of_between) == 3 * 240
+        assert balance(as_of_today) == 5 * 240
+
+
+def test_stock_balance_as_of_excludes_voided_sale(app):
+    with app.app_context():
+        from auth import create_user
+        from sales import create_sale, void_sale
+
+        user_id = create_user("cashier", "pw", "staff")
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+
+        sale = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 30}])
+        today = datetime.date.today().isoformat()
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        assert rows[medicine_id]["balance"] == 70  # 100 - 30
+
+        void_sale(sale["sale_id"])
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        # The sale_items row still exists in the database -- it must be excluded
+        # via sales.voided = 0, not by the row disappearing.
+        assert rows[medicine_id]["balance"] == 100
+        assert rows[medicine_id]["balance"] == get_medicine(medicine_id)["stock_in_base_units"]
+
+
+def test_stock_balance_as_of_excludes_voided_purchase_return(app):
+    with app.app_context():
+        from auth import create_user
+        from purchases import create_purchase_bill, create_purchase_return, void_purchase_return
+        from vendors import add_vendor
+
+        user_id = create_user("admin1", "pw", "admin")
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        bill = create_purchase_bill(user_id, vendor_id, "2026-08-01", [{
+            "medicine_id": medicine_id, "unit_name": "Box", "quantity": 5,
+            "cost_price_original": 1.0, "mrp_original": 2.0,
+        }])
+        ret = create_purchase_return(
+            bill["purchase_bill_id"],
+            [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 2}],
+            "damaged", user_id,
+        )
+        today = datetime.date.today().isoformat()
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        assert rows[medicine_id]["balance"] == 3 * 240  # 5 received - 2 returned
+
+        void_purchase_return(ret["purchase_return_id"])
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        # The purchase_return_items row still exists -- excluded via
+        # purchase_returns.voided = 0, not by deletion.
+        assert rows[medicine_id]["balance"] == 5 * 240
+        assert rows[medicine_id]["balance"] == get_medicine(medicine_id)["stock_in_base_units"]
+
+
+def test_stock_balance_as_of_excludes_voided_sale_return(app):
+    with app.app_context():
+        from auth import create_user
+        from sales import create_sale, create_sale_return, get_sale, void_sale_return
+
+        user_id = create_user("cashier", "pw", "staff")
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Tablet", 100, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+
+        sale = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 30}])
+        sale_item_id = get_sale(sale["sale_id"])["items"][0]["id"]
+        ret = create_sale_return(
+            sale["sale_id"], [{"sale_item_id": sale_item_id, "quantity": 10}], "wrong_item", user_id,
+        )
+        today = datetime.date.today().isoformat()
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        assert rows[medicine_id]["balance"] == 80  # 100 - 30 + 10
+
+        void_sale_return(ret["sale_return_id"])
+        rows = {r["medicine_id"]: r for r in stock_balance_as_of(today)}
+        # The sale_return_items row still exists -- excluded via
+        # sale_returns.voided = 0, not by deletion.
+        assert rows[medicine_id]["balance"] == 70
+        assert rows[medicine_id]["balance"] == get_medicine(medicine_id)["stock_in_base_units"]
+
+
+def test_stock_balance_as_of_cost_vs_mrp_value_switching(app):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.5, mrp_per_base_unit=3.0)
+        today = datetime.date.today().isoformat()
+
+        cost_rows = {r["medicine_id"]: r for r in stock_balance_as_of(today, price_basis="cost")}
+        mrp_rows = {r["medicine_id"]: r for r in stock_balance_as_of(today, price_basis="mrp")}
+
+        balance = 2 * 240
+        assert cost_rows[medicine_id]["unit_price"] == 1.5
+        assert cost_rows[medicine_id]["value"] == balance * 1.5
+        assert mrp_rows[medicine_id]["unit_price"] == 3.0
+        assert mrp_rows[medicine_id]["value"] == balance * 3.0
+
+
+def test_stock_balance_as_of_rejects_invalid_price_basis(app):
+    with app.app_context():
+        make_box_file_medicine(name="Cetamol")
+        with pytest.raises(ValueError):
+            stock_balance_as_of(datetime.date.today().isoformat(), price_basis="retail")
+
+
+# --- stock_balance_view route -----------------------------------------------
+
+def test_stock_balance_view_requires_admin(app, client, staff_user):
+    client.post("/login", data={"username": "staff1", "password": "staffpass"})
+    resp = client.get("/medicines/stock-balance")
+    assert resp.status_code == 403
+
+
+def test_stock_balance_view_renders_for_admin(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 2, cost_price_per_base_unit=1.5, mrp_per_base_unit=3.0)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/stock-balance")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Cetamol" in body
+    assert "Upto Date" in body
+
+
+def test_stock_balance_view_defaults_to_today(app, client, admin_user):
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/stock-balance")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert datetime.date.today().isoformat() in body
+
+
+def test_stock_balance_view_mrp_toggle_changes_value_shown(app, client, admin_user):
+    with app.app_context():
+        medicine_id = make_box_file_medicine(name="Cetamol", tablets_per_file=20, files_per_box=12)
+        make_stock(medicine_id, "Box", 1, cost_price_per_base_unit=1.0, mrp_per_base_unit=5.0)
+    client.post("/login", data={"username": "admin", "password": "adminpass"})
+    resp = client.get("/medicines/stock-balance", query_string={"price_basis": "mrp"})
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # 240 base units at MRP 5.0/base unit = 1200.00
+    assert "1200.00" in body

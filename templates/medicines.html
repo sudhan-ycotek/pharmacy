@@ -5,7 +5,10 @@
 <div class="panel-head" style="margin-bottom:14px">
   <div></div>
   {% if session.get('role') == 'admin' %}
-  <a href="{{ url_for('inventory.add_medicine_view') }}" class="btn btn-primary">+ Add Medicine</a>
+  <div style="display:flex; gap:10px">
+    <a href="{{ url_for('inventory.stock_balance_view') }}" class="btn btn-secondary">Stock Balance Report</a>
+    <a href="{{ url_for('inventory.add_medicine_view') }}" class="btn btn-primary">+ Add Medicine</a>
+  </div>
   {% endif %}
 </div>
 <div class="card panel">

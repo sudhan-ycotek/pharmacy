@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block page_title %}Stock Balance Report{% endblock %}
+{% block page_desc %}Every medicine's reconstructed stock quantity as of a given date, valued at current cost or MRP.{% endblock %}
+{% block content %}
+<div class="panel-head" style="margin-bottom:14px">
+  <form method="get" class="field-row" style="flex-wrap:wrap; flex:1">
+    <div class="field">
+      <label>Upto Date</label>
+      <input type="date" name="as_of_date" value="{{ as_of_date }}">
+    </div>
+    <div class="field" style="max-width:160px">
+      <label>Value At</label>
+      <select name="price_basis">
+        <option value="cost" {{ "selected" if price_basis == "cost" }}>Cost</option>
+        <option value="mrp" {{ "selected" if price_basis == "mrp" }}>MRP</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button type="submit" class="btn btn-secondary">Filter</button>
+    </div>
+  </form>
+</div>
+
+<p class="panel-desc" style="margin-bottom:14px">
+  Quantities are reconstructed from stock receipts, adjustments, sales, and returns recorded
+  up to and including the chosen date. Value uses each medicine's <strong>current</strong>
+  {{ "cost" if price_basis == "cost" else "MRP" }} price, not a historical price as of that
+  date -- per-batch remaining quantity isn't shown here (it isn't reconstructable without
+  batch-level FIFO consumption tracking).
+</p>
+
+<div class="stat-row">
+  <div class="card stat-card">
+    <div class="label">Upto</div>
+    <div class="value">{{ as_of_date }}</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Medicines</div>
+    <div class="value">{{ rows|length }}</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Total {{ "Cost" if price_basis == "cost" else "MRP" }} Value</div>
+    <div class="value">Rs {{ "%.2f"|format(total_value) }}</div>
+  </div>
+</div>
+
+<div class="card panel">
+  <div class="field-row" style="margin-bottom:14px">
+    <div class="search-box" style="flex:1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input type="text" id="stock-balance-filter" placeholder="Search by name…" autocomplete="off">
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table id="stock-balance-table">
+      <thead>
+        <tr>
+          <th>Medicine</th><th>Category</th>
+          <th class="num">{{ "Cost" if price_basis == "cost" else "MRP" }}/Base Unit</th>
+          <th class="num">Balance (base units)</th>
+          <th class="num">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+      <tr data-name="{{ r['name']|lower }}">
+        <td>{{ r['name'] }}</td>
+        <td>{{ "Box/Strip" if r['packaging_type'] == "box_file" else "Bottled/Other" }}</td>
+        <td class="num">Rs {{ "%.2f"|format(r['unit_price']) }}</td>
+        <td class="num">
+          {{ r['balance'] }}
+          {% if r['balance'] < 0 %}<span class="badge critical">Negative</span>{% endif %}
+        </td>
+        <td class="num">Rs {{ "%.2f"|format(r['value']) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4" style="text-align:right; font-weight:700">Total</td>
+          <td class="num" style="font-weight:700">Rs {{ "%.2f"|format(total_value) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% if not rows %}
+  <p class="panel-desc">No medicines found.</p>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+var filterSearch = document.getElementById("stock-balance-filter");
+var balanceRows = document.querySelectorAll("#stock-balance-table tbody tr");
+
+filterSearch.addEventListener("input", function () {
+  var query = filterSearch.value.trim().toLowerCase();
+  balanceRows.forEach(function (row) {
+    row.style.display = (!query || row.dataset.name.indexOf(query) !== -1) ? "" : "none";
+  });
+});
+</script>
+{% endblock %}
