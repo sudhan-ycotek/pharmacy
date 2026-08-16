@@ -51,6 +51,20 @@ def _units_signature(units):
     return sorted((u["unit_name"], u["qty_in_base_units"], u["is_sellable"]) for u in units)
 
 
+def _next_medicine_code(db):
+    """MED-#### code: MAX(existing numeric suffix) + 1.
+
+    Same widen-past-9999-rather-than-block scheme as vendor codes.
+    """
+    existing_numbers = []
+    for row in db.execute("SELECT code FROM medicines WHERE code IS NOT NULL"):
+        code = row["code"]
+        if code and code.startswith("MED-") and code[4:].isdigit():
+            existing_numbers.append(int(code[4:]))
+    next_number = max(existing_numbers, default=0) + 1
+    return f"MED-{next_number:04d}"
+
+
 def add_medicine(name, packaging_type, low_stock_threshold, max_discount_percent=0,
                   photo_path=None, tablets_per_file=None, files_per_box=None, unit_name=None,
                   company_id=None, packing=None):
@@ -62,10 +76,11 @@ def add_medicine(name, packaging_type, low_stock_threshold, max_discount_percent
     units = _compute_units(packaging_type, tablets_per_file, files_per_box, unit_name)
 
     db = get_db()
+    code = _next_medicine_code(db)
     cur = db.execute(
-        "INSERT INTO medicines (name, packaging_type, photo_path, stock_in_base_units, "
-        "low_stock_threshold, max_discount_percent, company_id, packing) VALUES (?, ?, ?, 0, ?, ?, ?, ?)",
-        (name, packaging_type, photo_path, low_stock_threshold, round(max_discount_percent, 2),
+        "INSERT INTO medicines (code, name, packaging_type, photo_path, stock_in_base_units, "
+        "low_stock_threshold, max_discount_percent, company_id, packing) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+        (code, name, packaging_type, photo_path, low_stock_threshold, round(max_discount_percent, 2),
          company_id, (packing or "").strip() or None),
     )
     medicine_id = cur.lastrowid
@@ -187,7 +202,9 @@ def count_medicines():
 def search_medicines(query):
     db = get_db()
     return db.execute(
-        "SELECT * FROM medicines WHERE name LIKE ? ORDER BY name",
+        "SELECT m.*, c.name AS company_name FROM medicines m "
+        "LEFT JOIN companies c ON c.id = m.company_id "
+        "WHERE m.name LIKE ? ORDER BY m.name",
         (f"%{query}%",),
     ).fetchall()
 

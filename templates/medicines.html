@@ -31,14 +31,14 @@
       <thead><tr><th></th><th>Code</th><th>Medicine</th><th>Company</th><th>Packing</th><th>Category</th><th>Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for m in medicines %}
-      <tr data-name="{{ m['name']|lower }}" data-code="{{ m['id'] }}" data-company-id="{{ m['company_id'] or '' }}">
+      <tr data-name="{{ m['name']|lower }}" data-code="{{ (m['code'] or '')|lower }}" data-company-id="{{ m['company_id'] or '' }}">
         <td>
           <div class="thumb">
             {% if m['photo_path'] %}<img src="{{ url_for('static', filename=m['photo_path']) }}" alt="">
             {% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"></rect></svg>{% endif %}
           </div>
         </td>
-        <td class="num">{{ m['id'] }}</td>
+        <td>{{ m['code'] or '—' }}</td>
         <td><div class="med-name">{{ m['name'] }}</div></td>
         <td>{{ m['company_name'] or '—' }}</td>
         <td>{{ m['packing'] or '—' }}</td>

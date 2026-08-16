@@ -8,6 +8,7 @@ EXPECTED_TABLES = {
     "vendors", "purchase_bills", "purchase_payments",
     "purchase_returns", "purchase_return_items", "stock_adjustments",
     "sales", "sale_items", "sale_returns", "sale_return_items", "photo_tokens",
+    "company_vendors",
 }
 
 # The pre-Task-1 schema.sql shape: no `companies` table, no `sale_returns`/
@@ -207,17 +208,19 @@ def test_run_migrations_brings_legacy_db_up_to_current_shape():
     run_migrations(conn)
 
     assert EXPECTED_TABLES <= _table_names(conn)
-    assert {"company_id", "packing"} <= _columns(conn, "medicines")
-    assert "code" in _columns(conn, "vendors")
+    assert {"company_id", "packing", "code"} <= _columns(conn, "medicines")
+    assert {"code", "email", "pan_number", "bank_account_number", "pay_mode"} <= _columns(conn, "vendors")
+    assert "contact_person" in _columns(conn, "companies")
     assert {"batch_number", "expiry_date", "mrp_currency", "mrp_original"} <= _columns(
         conn, "stock_receipts"
     )
     assert "batch_number" in _columns(conn, "purchase_return_items")
-    assert {"doctor_name", "payment_method", "tender_amount", "change_amount"} <= _columns(
-        conn, "sales"
-    )
     assert {
-        "idx_vendors_code", "idx_purchase_bills_bill_date", "idx_stock_receipts_purchase_bill_id",
+        "doctor_name", "payment_method", "tender_amount", "change_amount", "receipt_number",
+    } <= _columns(conn, "sales")
+    assert {
+        "idx_vendors_code", "idx_medicines_code", "idx_sales_receipt_number",
+        "idx_purchase_bills_bill_date", "idx_stock_receipts_purchase_bill_id",
     } <= _index_names(conn)
 
     conn.close()
@@ -245,8 +248,33 @@ def test_run_migrations_backfills_vendor_codes_and_mrp_original():
     vendor_row = conn.execute("SELECT code FROM vendors WHERE name = 'Acme Pharma'").fetchone()
     assert vendor_row["code"] == "SUP-0001"
 
+    medicine_row = conn.execute("SELECT code FROM medicines WHERE name = 'Cetamol'").fetchone()
+    assert medicine_row["code"] == "MED-0001"
+
     receipt_row = conn.execute("SELECT mrp_original FROM stock_receipts WHERE id = 1").fetchone()
     assert receipt_row["mrp_original"] == 2.5
+
+    conn.close()
+
+
+def test_run_migrations_backfills_receipt_numbers_by_sale_date():
+    conn = _legacy_db()
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES ('cashier', 'x', 'staff')"
+    )
+    conn.execute(
+        "INSERT INTO sales (user_id, timestamp, total) VALUES (1, '2026-03-05 09:00:00', 10)"
+    )
+    conn.execute(
+        "INSERT INTO sales (user_id, timestamp, total) VALUES (1, '2026-03-05 15:00:00', 20)"
+    )
+    conn.commit()
+
+    run_migrations(conn)
+
+    rows = conn.execute("SELECT id, receipt_number FROM sales ORDER BY id").fetchall()
+    assert rows[0]["receipt_number"] == "MEDGLO-0305-KHAR-0001"
+    assert rows[1]["receipt_number"] == "MEDGLO-0305-KHAR-0002"
 
     conn.close()
 

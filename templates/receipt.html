@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block page_title %}Receipt #{{ sale['id'] }}{% endblock %}
+{% block page_title %}Receipt {{ sale['receipt_number'] or sale['id'] }}{% endblock %}
 {% block page_desc %}{% if sale['voided'] %}This sale has been voided.{% else %}Printable record of this sale.{% endif %}{% endblock %}
 {% block content %}
 <div class="card panel receipt" style="max-width:900px; margin:0 auto">
@@ -115,7 +115,7 @@
 
 <div class="modal-backdrop" id="return-modal">
   <div class="modal modal-lg">
-    <h3>Return Items from Sale #{{ sale['id'] }}</h3>
+    <h3>Return Items from Receipt {{ sale['receipt_number'] or sale['id'] }}</h3>
     <div id="return-error" class="banner-error" style="display:none"></div>
     <div class="table-scroll">
       <table>

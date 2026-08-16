@@ -1,11 +1,18 @@
 import sqlite3
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
 from auth import role_required
 from db import get_db
 
 bp = Blueprint("vendors", __name__, url_prefix="/vendors")
+
+PAY_MODES = ("cash", "bank_transfer", "cheque", "digital_wallet")
+
+
+def _validate_pay_mode(pay_mode):
+    if pay_mode is not None and pay_mode not in PAY_MODES:
+        raise ValueError(f"pay_mode must be one of {', '.join(PAY_MODES)}")
 
 
 def _next_vendor_code(db):
@@ -26,26 +33,55 @@ def _next_vendor_code(db):
     return f"SUP-{next_number:04d}"
 
 
-def _insert_vendor(db, name, phone=None, address=None):
+def _insert_vendor(db, name, phone=None, address=None, email=None, pan_number=None,
+                    bank_account_number=None, pay_mode=None):
     name = (name or "").strip()
     if not name:
         raise ValueError("vendor name is required")
+    _validate_pay_mode(pay_mode)
     code = _next_vendor_code(db)
     try:
         cur = db.execute(
-            "INSERT INTO vendors (name, phone, address, code) VALUES (?, ?, ?, ?)",
-            (name, (phone or "").strip() or None, (address or "").strip() or None, code),
+            "INSERT INTO vendors (name, phone, address, code, email, pan_number, "
+            "bank_account_number, pay_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, (phone or "").strip() or None, (address or "").strip() or None, code,
+             (email or "").strip() or None, (pan_number or "").strip() or None,
+             (bank_account_number or "").strip() or None, pay_mode or None),
         )
     except sqlite3.IntegrityError:
         raise ValueError(f"vendor '{name}' already exists")
     return cur.lastrowid
 
 
-def add_vendor(name, phone=None, address=None):
+def add_vendor(name, phone=None, address=None, email=None, pan_number=None,
+               bank_account_number=None, pay_mode=None):
     db = get_db()
-    vendor_id = _insert_vendor(db, name, phone, address)
+    vendor_id = _insert_vendor(db, name, phone, address, email, pan_number,
+                                bank_account_number, pay_mode)
     db.commit()
     return vendor_id
+
+
+def edit_vendor(vendor_id, name, phone=None, address=None, email=None, pan_number=None,
+                 bank_account_number=None, pay_mode=None):
+    db = get_db()
+    if get_vendor(vendor_id) is None:
+        raise ValueError(f"vendor {vendor_id} not found")
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("vendor name is required")
+    _validate_pay_mode(pay_mode)
+    try:
+        db.execute(
+            "UPDATE vendors SET name = ?, phone = ?, address = ?, email = ?, pan_number = ?, "
+            "bank_account_number = ?, pay_mode = ? WHERE id = ?",
+            (name, (phone or "").strip() or None, (address or "").strip() or None,
+             (email or "").strip() or None, (pan_number or "").strip() or None,
+             (bank_account_number or "").strip() or None, pay_mode or None, vendor_id),
+        )
+    except sqlite3.IntegrityError:
+        raise ValueError(f"vendor '{name}' already exists")
+    db.commit()
 
 
 def list_vendors():
@@ -92,6 +128,45 @@ def add_vendor_view():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"id": vendor_id, "name": get_vendor(vendor_id)["name"]})
+
+
+def _parse_vendor_form(form):
+    return {
+        "phone": form.get("phone"),
+        "address": form.get("address"),
+        "email": form.get("email"),
+        "pan_number": form.get("pan_number"),
+        "bank_account_number": form.get("bank_account_number"),
+        "pay_mode": form.get("pay_mode") or None,
+    }
+
+
+@bp.route("/add", methods=["GET", "POST"])
+@role_required("admin")
+def add_vendor_form_view():
+    if request.method == "POST":
+        try:
+            vendor_id = add_vendor(request.form.get("name", ""), **_parse_vendor_form(request.form))
+            return redirect(url_for("vendors.vendor_detail_view", vendor_id=vendor_id))
+        except ValueError as e:
+            flash(str(e))
+    return render_template("vendor_form.html", vendor=None, pay_modes=PAY_MODES)
+
+
+@bp.route("/<int:vendor_id>/edit", methods=["GET", "POST"])
+@role_required("admin")
+def edit_vendor_view(vendor_id):
+    vendor = get_vendor(vendor_id)
+    if vendor is None:
+        return "Vendor not found", 404
+
+    if request.method == "POST":
+        try:
+            edit_vendor(vendor_id, request.form.get("name", ""), **_parse_vendor_form(request.form))
+            return redirect(url_for("vendors.vendor_detail_view", vendor_id=vendor_id))
+        except ValueError as e:
+            flash(str(e))
+    return render_template("vendor_form.html", vendor=vendor, pay_modes=PAY_MODES)
 
 
 @bp.route("/<int:vendor_id>", methods=["GET"])

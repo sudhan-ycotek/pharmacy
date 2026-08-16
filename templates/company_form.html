@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block page_title %}{{ "Edit Company" if company else "Add Company" }}{% endblock %}
+{% block page_desc %}{{ "Update this company's details and linked vendors." if company else "Add a new company and optionally link the vendors that supply it." }}{% endblock %}
+{% block content %}
+<div class="card panel" style="max-width:520px; margin:0 auto">
+  <form method="post" class="styled-form">
+    {% if company %}
+    <div class="field">
+      <label>Company Code</label>
+      <input type="text" value="{{ company['code'] }}" disabled>
+      <p class="field-hint">Auto-generated, can't be changed.</p>
+    </div>
+    {% else %}
+    <p class="field-hint">Company code is generated automatically after you save.</p>
+    {% endif %}
+
+    <div class="field">
+      <label>Company Name</label>
+      <input type="text" name="name" value="{{ company['name'] if company else '' }}" required autofocus>
+    </div>
+
+    <div class="field">
+      <label>Contact Person</label>
+      <input type="text" name="contact_person" value="{{ company['contact_person'] if company and company['contact_person'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Phone</label>
+      <input type="text" name="phone" value="{{ company['phone'] if company and company['phone'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Company Address</label>
+      <input type="text" name="address" value="{{ company['address'] if company and company['address'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Vendors associated with this company (optional)</label>
+      <div class="checkbox-list">
+        {% for v in all_vendors %}
+        <label class="checkbox-list-item">
+          <input type="checkbox" name="vendor_ids" value="{{ v['id'] }}"
+                 {{ "checked" if v['id'] in linked_vendor_ids }}>
+          {{ v['name'] }}{% if v['code'] %} ({{ v['code'] }}){% endif %}
+        </label>
+        {% endfor %}
+        {% if not all_vendors %}
+        <p class="field-hint">No vendors yet — add one from the Vendors page first.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">{{ "Save Changes" if company else "Save Company" }}</button>
+  </form>
+</div>
+{% endblock %}

@@ -64,6 +64,53 @@ def _backfill_vendor_codes(db):
         next_number += 1
 
 
+def _backfill_medicine_codes(db):
+    """Assign MED-#### codes to any legacy medicine rows that don't have one yet.
+
+    Same widen-past-9999 numbering as vendor codes.
+    """
+    existing_numbers = []
+    for row in db.execute("SELECT code FROM medicines WHERE code IS NOT NULL"):
+        code = row["code"]
+        if code and code.startswith("MED-") and code[4:].isdigit():
+            existing_numbers.append(int(code[4:]))
+    next_number = max(existing_numbers, default=0) + 1
+
+    rows = db.execute("SELECT id FROM medicines WHERE code IS NULL ORDER BY id").fetchall()
+    for row in rows:
+        db.execute(
+            "UPDATE medicines SET code = ? WHERE id = ?",
+            (f"MED-{next_number:04d}", row["id"]),
+        )
+        next_number += 1
+
+
+def _backfill_receipt_numbers(db):
+    """Assign MEDGLO-MMDD-KHAR-#### receipt numbers to legacy sales rows that
+    don't have one yet, sequenced per calendar day (by MM-DD, ignoring year)
+    in timestamp order. Same widen-rather-than-block spirit as the other
+    backfills, just keyed per day instead of one global counter.
+    """
+    max_seq_by_mmdd = {}
+    for row in db.execute("SELECT receipt_number FROM sales WHERE receipt_number IS NOT NULL"):
+        parts = (row["receipt_number"] or "").split("-")
+        if len(parts) == 4 and parts[0] == "MEDGLO" and parts[2] == "KHAR" and parts[3].isdigit():
+            mmdd, seq = parts[1], int(parts[3])
+            max_seq_by_mmdd[mmdd] = max(max_seq_by_mmdd.get(mmdd, 0), seq)
+
+    rows = db.execute(
+        "SELECT id, timestamp FROM sales WHERE receipt_number IS NULL ORDER BY timestamp, id"
+    ).fetchall()
+    for row in rows:
+        mmdd = row["timestamp"][5:7] + row["timestamp"][8:10]
+        next_number = max_seq_by_mmdd.get(mmdd, 0) + 1
+        db.execute(
+            "UPDATE sales SET receipt_number = ? WHERE id = ?",
+            (f"MEDGLO-{mmdd}-KHAR-{next_number:04d}", row["id"]),
+        )
+        max_seq_by_mmdd[mmdd] = next_number
+
+
 def run_migrations(db):
     """Bring an existing pharmacy.db up to the current schema.sql shape.
 
@@ -85,13 +132,36 @@ def run_migrations(db):
         )
         """
     )
+    _add_column_if_missing(db, "companies", "contact_person", "TEXT")
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_vendors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id),
+            vendor_id INTEGER NOT NULL REFERENCES vendors(id),
+            UNIQUE(company_id, vendor_id)
+        )
+        """
+    )
 
     _add_column_if_missing(db, "medicines", "company_id", "INTEGER REFERENCES companies(id)")
     _add_column_if_missing(db, "medicines", "packing", "TEXT")
+    _add_column_if_missing(db, "medicines", "code", "TEXT")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_medicines_code ON medicines(code)")
+    _backfill_medicine_codes(db)
 
     _add_column_if_missing(db, "vendors", "code", "TEXT")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vendors_code ON vendors(code)")
     _backfill_vendor_codes(db)
+
+    _add_column_if_missing(db, "vendors", "email", "TEXT")
+    _add_column_if_missing(db, "vendors", "pan_number", "TEXT")
+    _add_column_if_missing(db, "vendors", "bank_account_number", "TEXT")
+    _add_column_if_missing(
+        db, "vendors", "pay_mode",
+        "TEXT CHECK(pay_mode IN ('cash', 'bank_transfer', 'cheque', 'digital_wallet'))",
+    )
 
     _add_column_if_missing(db, "stock_receipts", "batch_number", "TEXT")
     _add_column_if_missing(db, "stock_receipts", "expiry_date", "TEXT")
@@ -113,6 +183,9 @@ def run_migrations(db):
     )
     _add_column_if_missing(db, "sales", "tender_amount", "REAL")
     _add_column_if_missing(db, "sales", "change_amount", "REAL")
+    _add_column_if_missing(db, "sales", "receipt_number", "TEXT")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_receipt_number ON sales(receipt_number)")
+    _backfill_receipt_numbers(db)
 
     db.execute(
         """

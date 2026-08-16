@@ -11,11 +11,20 @@ CREATE TABLE companies (
     name TEXT NOT NULL UNIQUE,
     phone TEXT,
     address TEXT,
+    contact_person TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE company_vendors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    vendor_id INTEGER NOT NULL REFERENCES vendors(id),
+    UNIQUE(company_id, vendor_id)
 );
 
 CREATE TABLE medicines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT,
     name TEXT NOT NULL,
     packaging_type TEXT NOT NULL CHECK(packaging_type IN ('box_file', 'bottled_other')),
     photo_path TEXT,
@@ -43,7 +52,11 @@ CREATE TABLE vendors (
     phone TEXT,
     address TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    code TEXT
+    code TEXT,
+    email TEXT,
+    pan_number TEXT,
+    bank_account_number TEXT,
+    pay_mode TEXT CHECK(pay_mode IN ('cash', 'bank_transfer', 'cheque', 'digital_wallet'))
 );
 
 CREATE TABLE purchase_bills (
@@ -137,7 +150,8 @@ CREATE TABLE sales (
     doctor_name TEXT,
     payment_method TEXT NOT NULL DEFAULT 'cash' CHECK(payment_method IN ('cash', 'online')),
     tender_amount REAL,
-    change_amount REAL
+    change_amount REAL,
+    receipt_number TEXT
 );
 
 CREATE TABLE sale_items (
@@ -187,5 +201,7 @@ CREATE TABLE photo_tokens (
 );
 
 CREATE UNIQUE INDEX idx_vendors_code ON vendors(code);
+CREATE UNIQUE INDEX idx_medicines_code ON medicines(code);
+CREATE UNIQUE INDEX idx_sales_receipt_number ON sales(receipt_number);
 CREATE INDEX idx_purchase_bills_bill_date ON purchase_bills(bill_date);
 CREATE INDEX idx_stock_receipts_purchase_bill_id ON stock_receipts(purchase_bill_id);

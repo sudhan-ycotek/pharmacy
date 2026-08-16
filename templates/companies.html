@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block page_title %}Companies{% endblock %}
+{% block page_desc %}Manufacturers/companies supplying your medicines, and which vendors carry them.{% endblock %}
+{% block content %}
+<div class="panel-head" style="margin-bottom:14px">
+  <form method="get" class="search-box" style="max-width:320px">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    <input type="text" name="q" placeholder="Search by name…" autocomplete="off" value="{{ q }}">
+  </form>
+  <a href="{{ url_for('companies.add_company_form_view') }}" class="btn btn-primary">+ Add Company</a>
+</div>
+<div class="card panel">
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Code</th><th>Company</th><th>Contact Person</th><th>Phone</th><th>Address</th><th>Vendors</th><th></th></tr></thead>
+      <tbody>
+      {% for c in companies %}
+      <tr>
+        <td>{{ c['code'] }}</td>
+        <td><div class="med-name">{{ c['name'] }}</div></td>
+        <td>{{ c['contact_person'] or '—' }}</td>
+        <td>{{ c['phone'] or '—' }}</td>
+        <td>{{ c['address'] or '—' }}</td>
+        <td>
+          {% if vendors_by_company[c['id']] %}
+          {{ vendors_by_company[c['id']] | map(attribute='name') | join(', ') }}
+          {% else %}
+          —
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('companies.edit_company_view', company_id=c['id']) }}" class="btn btn-secondary btn-icon">Edit</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not companies %}
+  <p class="panel-desc">{{ "No companies match this search." if q else "No companies yet." }}</p>
+  {% endif %}
+</div>
+{% endblock %}

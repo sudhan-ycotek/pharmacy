@@ -10,9 +10,28 @@ bp = Blueprint("sales", __name__, url_prefix="/sales")
 
 SALE_RETURN_REASONS = ("wrong_item", "customer_request", "adverse_reaction", "other")
 
+RECEIPT_PREFIX = "MEDGLO"
+RECEIPT_LOCATION = "KHAR"
+
 
 def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _next_receipt_number(db, mmdd):
+    """MEDGLO-MMDD-KHAR-#### receipt number, sequence resetting each day (by
+    MM-DD, ignoring year): MAX(existing numeric suffix for this day) + 1.
+    """
+    prefix = f"{RECEIPT_PREFIX}-{mmdd}-{RECEIPT_LOCATION}-"
+    existing_numbers = []
+    for row in db.execute(
+        "SELECT receipt_number FROM sales WHERE receipt_number LIKE ?", (f"{prefix}%",)
+    ):
+        suffix = row["receipt_number"][len(prefix):]
+        if suffix.isdigit():
+            existing_numbers.append(int(suffix))
+    next_number = max(existing_numbers, default=0) + 1
+    return f"{prefix}{next_number:04d}"
 
 
 def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, patient_name=None,
@@ -133,6 +152,10 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, p
          discount_amount, total, doctor_name, payment_method, tender_amount, change_amount),
     )
     sale_id = cur.lastrowid
+    sale_timestamp = db.execute("SELECT timestamp FROM sales WHERE id = ?", (sale_id,)).fetchone()["timestamp"]
+    mmdd = sale_timestamp[5:7] + sale_timestamp[8:10]
+    receipt_number = _next_receipt_number(db, mmdd)
+    db.execute("UPDATE sales SET receipt_number = ? WHERE id = ?", (receipt_number, sale_id))
     for p in prepared:
         db.execute(
             "INSERT INTO sale_items (sale_id, medicine_id, unit_name, qty_in_base_units, "
@@ -465,14 +488,17 @@ def list_sales_view():
 @login_required
 def search():
     query = request.args.get("q", "")
+    show_cost = current_user()["role"] == "admin"
     medicines = search_medicines(query)
     results = []
     for m in medicines:
         units = sellable_units(m["id"])
         priced = m["mrp_per_base_unit"] > 0
-        results.append({
-            "id": m["id"], "name": m["name"], "packaging_type": m["packaging_type"],
+        result = {
+            "id": m["id"], "code": m["code"], "name": m["name"], "packaging_type": m["packaging_type"],
             "photo_path": m["photo_path"], "max_discount_percent": m["max_discount_percent"],
+            "company_name": m["company_name"],
+            "mrp_per_base_unit": m["mrp_per_base_unit"] if priced else None,
             "units": [
                 {
                     "unit_name": u["unit_name"],
@@ -480,7 +506,10 @@ def search():
                 }
                 for u in units
             ],
-        })
+        }
+        if show_cost:
+            result["cost_price_per_base_unit"] = m["cost_price_per_base_unit"]
+        results.append(result)
     return jsonify(results)
 
 

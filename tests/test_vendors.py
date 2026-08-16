@@ -1,6 +1,6 @@
 import pytest
 
-from vendors import add_vendor, get_vendor, list_vendors, search_vendors
+from vendors import add_vendor, edit_vendor, get_vendor, list_vendors, search_vendors
 
 
 def test_add_vendor_creates_and_returns_id(app):
@@ -158,3 +158,129 @@ def test_vendor_detail_view_shows_vendor_and_balance(admin_client, app):
 def test_vendor_detail_view_404_for_unknown_vendor(admin_client):
     resp = admin_client.get("/vendors/999")
     assert resp.status_code == 404
+
+
+def test_add_vendor_stores_email_pan_bank_and_pay_mode(app):
+    with app.app_context():
+        vendor_id = add_vendor(
+            "ABC Vendors", phone="9800000000", address="Kathmandu",
+            email="abc@vendors.com", pan_number="123456789",
+            bank_account_number="00112233", pay_mode="bank_transfer",
+        )
+        vendor = get_vendor(vendor_id)
+        assert vendor["email"] == "abc@vendors.com"
+        assert vendor["pan_number"] == "123456789"
+        assert vendor["bank_account_number"] == "00112233"
+        assert vendor["pay_mode"] == "bank_transfer"
+
+
+def test_add_vendor_new_fields_are_optional(app):
+    with app.app_context():
+        vendor_id = add_vendor("XYZ Traders")
+        vendor = get_vendor(vendor_id)
+        assert vendor["email"] is None
+        assert vendor["pan_number"] is None
+        assert vendor["bank_account_number"] is None
+        assert vendor["pay_mode"] is None
+
+
+def test_add_vendor_rejects_invalid_pay_mode(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            add_vendor("ABC Vendors", pay_mode="crypto")
+
+
+def test_edit_vendor_updates_fields(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors", phone="111")
+        edit_vendor(
+            vendor_id, "ABC Vendors Renamed", phone="222", address="Pokhara",
+            email="new@vendors.com", pan_number="999", bank_account_number="555",
+            pay_mode="cheque",
+        )
+        vendor = get_vendor(vendor_id)
+        assert vendor["name"] == "ABC Vendors Renamed"
+        assert vendor["phone"] == "222"
+        assert vendor["address"] == "Pokhara"
+        assert vendor["email"] == "new@vendors.com"
+        assert vendor["pan_number"] == "999"
+        assert vendor["bank_account_number"] == "555"
+        assert vendor["pay_mode"] == "cheque"
+
+
+def test_edit_vendor_keeps_code_unchanged(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        code_before = get_vendor(vendor_id)["code"]
+        edit_vendor(vendor_id, "ABC Vendors Renamed")
+        assert get_vendor(vendor_id)["code"] == code_before
+
+
+def test_edit_vendor_raises_for_unknown_vendor(app):
+    with app.app_context():
+        with pytest.raises(ValueError):
+            edit_vendor(999, "Nope")
+
+
+def test_edit_vendor_rejects_invalid_pay_mode(app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        with pytest.raises(ValueError):
+            edit_vendor(vendor_id, "ABC Vendors", pay_mode="crypto")
+
+
+def test_add_vendor_form_view_get_renders_form(admin_client):
+    resp = admin_client.get("/vendors/add")
+    assert resp.status_code == 200
+    assert b"Pay Mode" in resp.data
+
+
+def test_add_vendor_form_view_requires_admin(staff_client):
+    resp = staff_client.get("/vendors/add")
+    assert resp.status_code == 403
+
+
+def test_add_vendor_form_view_post_creates_vendor_and_redirects(admin_client, app):
+    resp = admin_client.post("/vendors/add", data={
+        "name": "New Vendor", "phone": "123", "address": "Ktm",
+        "email": "a@b.com", "pan_number": "PAN1", "bank_account_number": "ACC1",
+        "pay_mode": "cash",
+    })
+    assert resp.status_code == 302
+    with app.app_context():
+        vendors = list_vendors()
+        assert any(v["name"] == "New Vendor" and v["email"] == "a@b.com" for v in vendors)
+
+
+def test_edit_vendor_view_get_renders_form(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+    resp = admin_client.get(f"/vendors/{vendor_id}/edit")
+    assert resp.status_code == 200
+
+
+def test_edit_vendor_view_get_404_for_unknown_vendor(admin_client):
+    resp = admin_client.get("/vendors/999/edit")
+    assert resp.status_code == 404
+
+
+def test_edit_vendor_view_requires_admin(staff_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+    resp = staff_client.get(f"/vendors/{vendor_id}/edit")
+    assert resp.status_code == 403
+
+
+def test_edit_vendor_view_post_updates_vendor(admin_client, app):
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+    resp = admin_client.post(f"/vendors/{vendor_id}/edit", data={
+        "name": "Renamed Vendor", "phone": "999", "address": "Pokhara",
+        "email": "x@y.com", "pan_number": "PAN2", "bank_account_number": "ACC2",
+        "pay_mode": "digital_wallet",
+    })
+    assert resp.status_code == 302
+    with app.app_context():
+        vendor = get_vendor(vendor_id)
+        assert vendor["name"] == "Renamed Vendor"
+        assert vendor["pay_mode"] == "digital_wallet"

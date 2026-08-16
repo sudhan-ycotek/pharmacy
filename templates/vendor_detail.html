@@ -2,8 +2,15 @@
 {% block page_title %}{{ vendor['name'] }}{% endblock %}
 {% block page_desc %}Vendor contact info and purchase history.{% endblock %}
 {% block content %}
+{% set pay_mode_labels = {"cash": "Cash", "bank_transfer": "Bank Transfer", "cheque": "Cheque", "digital_wallet": "Digital Wallet"} %}
+<div class="panel-head" style="margin-bottom:14px">
+  <div></div>
+  <a href="{{ url_for('vendors.edit_vendor_view', vendor_id=vendor['id']) }}" class="btn btn-secondary">Edit Vendor</a>
+</div>
 <div class="card panel">
-  <p class="panel-desc">Phone: {{ vendor['phone'] or '—' }} · Address: {{ vendor['address'] or '—' }}</p>
+  <p class="panel-desc">Code: {{ vendor['code'] or '—' }} · Phone: {{ vendor['phone'] or '—' }} · Email: {{ vendor['email'] or '—' }}</p>
+  <p class="panel-desc">Address: {{ vendor['address'] or '—' }}</p>
+  <p class="panel-desc">PAN Number: {{ vendor['pan_number'] or '—' }} · Bank A/C Number: {{ vendor['bank_account_number'] or '—' }} · Pay Mode: {{ pay_mode_labels.get(vendor['pay_mode'], '—') }}</p>
   <div class="stat-row" style="margin-top:14px">
     <div class="card stat-card">
       <div class="label">Total Billed</div>

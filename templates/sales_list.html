@@ -16,7 +16,7 @@
     <table>
       <thead>
         <tr>
-          <th>Date/Time</th><th>Sold By</th><th class="num">Total</th><th class="num">Discount</th>
+          <th>Receipt #</th><th>Date/Time</th><th>Sold By</th><th class="num">Total</th><th class="num">Discount</th>
           {% if session.get('role') == 'admin' %}<th class="num">Profit</th>{% endif %}
           <th>Status</th><th></th>
         </tr>
@@ -24,6 +24,7 @@
       <tbody>
       {% for s in sales %}
       <tr>
+        <td>{{ s['receipt_number'] or '—' }}</td>
         <td>{{ s['timestamp'] }}</td>
         <td>{{ s['username'] }}</td>
         <td class="num">Rs {{ "%.2f"|format(s['total']) }}</td>

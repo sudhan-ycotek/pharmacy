@@ -7,7 +7,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
     <input type="text" id="search-box" placeholder="Search medicine by name…" autocomplete="off" autofocus>
   </div>
-  <div id="search-results" class="search-results"></div>
+  <div id="search-results" class="med-search-results"></div>
   <div class="field-row" style="margin-top:12px">
     <div class="field" style="max-width:320px">
       <label>Patient Name (optional)</label>
@@ -105,6 +105,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
+var showCost = {{ 'true' if session.get('role') == 'admin' else 'false' }};
 var bill = [];
 var currentResults = [];
 var highlightedIndex = -1;
@@ -120,50 +121,59 @@ var resultsBox = document.getElementById("search-results");
 
 function renderResults() {
   resultsBox.innerHTML = "";
+  if (currentResults.length === 0) { return; }
+
+  var table = document.createElement("table");
+  table.className = "med-search-table";
+
+  var thead = document.createElement("thead");
+  var headRow = document.createElement("tr");
+  ["Code", "Medicine", "Manufacturer"].forEach(function (label) {
+    var th = document.createElement("th");
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  if (showCost) {
+    var costTh = document.createElement("th");
+    costTh.className = "num";
+    costTh.textContent = "Cost/Unit";
+    headRow.appendChild(costTh);
+  }
+  var mrpTh = document.createElement("th");
+  mrpTh.className = "num";
+  mrpTh.textContent = "MRP/Unit";
+  headRow.appendChild(mrpTh);
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  var tbody = document.createElement("tbody");
   currentResults.forEach(function (m, i) {
-    var row = document.createElement("div");
-    row.className = "search-result" + (i === highlightedIndex ? " highlighted" : "");
+    var row = tbody.insertRow();
+    row.className = i === highlightedIndex ? "highlighted" : "";
 
-    // Create thumb element (static)
-    var thumbDiv = document.createElement("div");
-    thumbDiv.className = "thumb";
-    if (m.photo_path) {
-      var img = document.createElement("img");
-      img.src = "/static/" + m.photo_path;
-      img.alt = "";
-      thumbDiv.appendChild(img);
-    } else {
-      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "2");
-      var rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", "3");
-      rect.setAttribute("y", "7");
-      rect.setAttribute("width", "18");
-      rect.setAttribute("height", "13");
-      rect.setAttribute("rx", "2");
-      svg.appendChild(rect);
-      thumbDiv.appendChild(svg);
+    row.insertCell(0).textContent = m.code || "—";
+
+    var nameCell = row.insertCell(1);
+    nameCell.className = "med-name";
+    nameCell.textContent = m.name;
+
+    row.insertCell(2).textContent = m.company_name || "—";
+
+    if (showCost) {
+      var costCell = row.insertCell(3);
+      costCell.className = "num";
+      costCell.textContent = m.cost_price_per_base_unit ? "Rs " + m.cost_price_per_base_unit.toFixed(2) : "—";
     }
-    row.appendChild(thumbDiv);
 
-    // Create info div with safe text content
-    var infoDiv = document.createElement("div");
-    var medNameDiv = document.createElement("div");
-    medNameDiv.className = "med-name";
-    medNameDiv.textContent = m.name;
-    var medSubDiv = document.createElement("div");
-    medSubDiv.className = "med-sub";
-    medSubDiv.textContent = m.packaging_type === "box_file" ? "Box/Strip" : "Bottled/Other";
-    infoDiv.appendChild(medNameDiv);
-    infoDiv.appendChild(medSubDiv);
-    row.appendChild(infoDiv);
+    var mrpCell = row.insertCell(showCost ? 4 : 3);
+    mrpCell.className = "num";
+    mrpCell.textContent = m.mrp_per_base_unit ? "Rs " + m.mrp_per_base_unit.toFixed(2) : "—";
 
     row.addEventListener("click", function () { selectMedicine(i); });
-    resultsBox.appendChild(row);
+    tbody.appendChild(row);
   });
+  table.appendChild(tbody);
+  resultsBox.appendChild(table);
 }
 
 function selectMedicine(index) {

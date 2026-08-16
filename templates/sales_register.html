@@ -43,7 +43,7 @@
     <table>
       <thead>
         <tr>
-          <th>Date/Time</th><th>Patient</th><th>Doctor</th><th>Sold By</th>
+          <th>Receipt #</th><th>Date/Time</th><th>Patient</th><th>Doctor</th><th>Sold By</th>
           <th class="num">Total</th><th class="num">Returned</th><th class="num">Net</th>
           <th>Payment</th><th class="num">Tender</th><th class="num">Change</th>
           <th>Status</th><th></th>
@@ -52,6 +52,7 @@
       <tbody>
       {% for s in sales %}
       <tr>
+        <td>{{ s['receipt_number'] or '—' }}</td>
         <td>{{ s['timestamp'] }}</td>
         <td>{{ s['patient_name'] or 'Walk-in' }}</td>
         <td>{{ s['doctor_name'] or 'Not specified' }}</td>

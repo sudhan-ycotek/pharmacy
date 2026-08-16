@@ -626,6 +626,27 @@ def test_add_medicine_rejects_unknown_company_id(app):
             add_medicine("Cetamol", "box_file", 10, tablets_per_file=20, files_per_box=12, company_id=999)
 
 
+def test_add_medicine_assigns_sequential_med_codes(app):
+    with app.app_context():
+        id1 = make_box_file_medicine(name="Cetamol")
+        id2 = make_box_file_medicine(name="Paracetamol")
+        assert get_medicine(id1)["code"] == "MED-0001"
+        assert get_medicine(id2)["code"] == "MED-0002"
+
+
+def test_add_medicine_code_overflows_past_9999_rather_than_blocking(app):
+    with app.app_context():
+        from db import get_db
+
+        db = get_db()
+        db.execute(
+            "INSERT INTO medicines (code, name, packaging_type) VALUES (?, ?, ?)",
+            ("MED-9999", "Medicine 9999", "bottled_other"),
+        )
+        medicine_id = make_bottled_medicine(name="Medicine 10000")
+        assert get_medicine(medicine_id)["code"] == "MED-10000"
+
+
 def test_list_medicines_includes_company_name_via_join(app):
     with app.app_context():
         from companies import add_company

@@ -82,6 +82,83 @@ def test_create_sale_rejects_unknown_unit(app):
             ])
 
 
+def test_create_sale_assigns_receipt_number_for_todays_date(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        sale = get_sale(result["sale_id"])["sale"]
+        today_mmdd = datetime.datetime.now().strftime("%m%d")
+        assert sale["receipt_number"] == f"MEDGLO-{today_mmdd}-KHAR-0001"
+
+
+def test_create_sale_receipt_numbers_increment_within_same_day(app):
+    medicine_id = _setup_medicine(app, stock_boxes=5)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        r1 = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        r2 = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        seq1 = int(get_sale(r1["sale_id"])["sale"]["receipt_number"].rsplit("-", 1)[1])
+        seq2 = int(get_sale(r2["sale_id"])["sale"]["receipt_number"].rsplit("-", 1)[1])
+        assert seq2 == seq1 + 1
+
+
+def test_create_sale_receipt_number_ignores_other_days_sequence(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        db = get_db()
+        db.execute(
+            "INSERT INTO sales (user_id, timestamp, total, receipt_number) "
+            "VALUES (?, '2020-01-01 10:00:00', 10, 'MEDGLO-0101-KHAR-0099')",
+            (user_id,),
+        )
+        db.commit()
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        sale = get_sale(result["sale_id"])["sale"]
+        today_mmdd = datetime.datetime.now().strftime("%m%d")
+        assert sale["receipt_number"] == f"MEDGLO-{today_mmdd}-KHAR-0001"
+
+
+def test_receipt_view_shows_receipt_number(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        receipt_number = get_sale(result["sale_id"])["sale"]["receipt_number"]
+    resp = admin_client.get(f"/sales/{result['sale_id']}/receipt")
+    assert resp.status_code == 200
+    assert receipt_number.encode() in resp.data
+
+
+def test_list_sales_view_shows_receipt_number_column(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        receipt_number = get_sale(result["sale_id"])["sale"]["receipt_number"]
+    resp = admin_client.get("/sales")
+    assert resp.status_code == 200
+    assert receipt_number.encode() in resp.data
+
+
+def test_sales_register_view_shows_receipt_number_column(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}])
+        receipt_number = get_sale(result["sale_id"])["sale"]["receipt_number"]
+    resp = admin_client.get("/sales/register")
+    assert resp.status_code == 200
+    assert receipt_number.encode() in resp.data
+
+
 def test_void_sale_restores_stock(app):
     medicine_id = _setup_medicine(app)
     with app.app_context():
@@ -122,7 +199,7 @@ def test_today_sales_total_excludes_voided(app):
 
 
 def test_sales_search_route_returns_matching_medicines(admin_client, app):
-    _setup_medicine(app)
+    medicine_id = _setup_medicine(app)
     response = admin_client.get("/sales/search?q=ceta")
     assert response.status_code == 200
     data = response.get_json()
@@ -130,6 +207,46 @@ def test_sales_search_route_returns_matching_medicines(admin_client, app):
     tablet_unit = next(u for u in data[0]["units"] if u["unit_name"] == "Tablet")
     assert tablet_unit["price"] == pytest.approx(2.5)
     assert "max_discount_percent" in data[0]
+    with app.app_context():
+        from inventory import get_medicine
+        assert data[0]["code"] == get_medicine(medicine_id)["code"]
+
+
+def test_sales_search_route_includes_company_and_mrp_for_admin_and_staff(app, admin_user, staff_user):
+    with app.app_context():
+        from companies import add_company
+        from inventory import add_medicine
+        company_id = add_company("Cipla")
+        medicine_id = add_medicine("Cetamol", "box_file", 10, tablets_per_file=20,
+                                    files_per_box=12, company_id=company_id)
+        make_stock(medicine_id, cost_price_per_base_unit=1.0, mrp_per_base_unit=2.5)
+
+    for username, password in (("admin", "adminpass"), ("staff1", "staffpass")):
+        # A fresh test client per login -- Flask test clients share cookies across
+        # every fixture built from the same underlying `client`, so logging in as a
+        # second user through a shared client silently overwrites the first session.
+        test_client = app.test_client()
+        test_client.post("/login", data={"username": username, "password": password})
+        response = test_client.get("/sales/search?q=ceta")
+        data = response.get_json()
+        assert data[0]["company_name"] == "Cipla"
+        assert data[0]["mrp_per_base_unit"] == pytest.approx(2.5)
+
+
+def test_sales_search_route_hides_cost_from_staff_but_shows_to_admin(app, admin_user, staff_user):
+    _setup_medicine(app)
+
+    admin_test_client = app.test_client()
+    admin_test_client.post("/login", data={"username": "admin", "password": "adminpass"})
+    admin_response = admin_test_client.get("/sales/search?q=ceta")
+    admin_data = admin_response.get_json()
+    assert admin_data[0]["cost_price_per_base_unit"] == pytest.approx(1.0)
+
+    staff_test_client = app.test_client()
+    staff_test_client.post("/login", data={"username": "staff1", "password": "staffpass"})
+    staff_response = staff_test_client.get("/sales/search?q=ceta")
+    staff_data = staff_response.get_json()
+    assert "cost_price_per_base_unit" not in staff_data[0]
 
 
 def test_finalize_sale_route_creates_sale_and_returns_redirect(admin_client, app):

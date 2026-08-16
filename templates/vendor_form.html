@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block page_title %}{{ "Edit Vendor" if vendor else "Add Vendor" }}{% endblock %}
+{% block page_desc %}{{ "Update this vendor's contact and payment details." if vendor else "Add a new vendor and their contact and payment details." }}{% endblock %}
+{% block content %}
+<div class="card panel" style="max-width:520px; margin:0 auto">
+  <form method="post" class="styled-form">
+    {% if vendor %}
+    <div class="field">
+      <label>Supplier Code</label>
+      <input type="text" value="{{ vendor['code'] }}" disabled>
+      <p class="field-hint">Auto-generated, can't be changed.</p>
+    </div>
+    {% else %}
+    <p class="field-hint">Supplier code is generated automatically after you save.</p>
+    {% endif %}
+
+    <div class="field">
+      <label>Name</label>
+      <input type="text" name="name" value="{{ vendor['name'] if vendor else '' }}" required autofocus>
+    </div>
+
+    <div class="field">
+      <label>Phone</label>
+      <input type="text" name="phone" value="{{ vendor['phone'] if vendor and vendor['phone'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Email</label>
+      <input type="email" name="email" value="{{ vendor['email'] if vendor and vendor['email'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>PAN Number</label>
+      <input type="text" name="pan_number" value="{{ vendor['pan_number'] if vendor and vendor['pan_number'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Address</label>
+      <input type="text" name="address" value="{{ vendor['address'] if vendor and vendor['address'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Bank A/C Number</label>
+      <input type="text" name="bank_account_number"
+             value="{{ vendor['bank_account_number'] if vendor and vendor['bank_account_number'] else '' }}">
+    </div>
+
+    <div class="field">
+      <label>Pay Mode</label>
+      <select name="pay_mode">
+        <option value="">Not specified</option>
+        <option value="cash" {{ "selected" if vendor and vendor['pay_mode'] == "cash" }}>Cash</option>
+        <option value="bank_transfer" {{ "selected" if vendor and vendor['pay_mode'] == "bank_transfer" }}>Bank Transfer</option>
+        <option value="cheque" {{ "selected" if vendor and vendor['pay_mode'] == "cheque" }}>Cheque</option>
+        <option value="digital_wallet" {{ "selected" if vendor and vendor['pay_mode'] == "digital_wallet" }}>Digital Wallet</option>
+      </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary">{{ "Save Changes" if vendor else "Save Vendor" }}</button>
+  </form>
+</div>
+{% endblock %}
