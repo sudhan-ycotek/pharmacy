@@ -6,6 +6,11 @@
   {% if sale['voided'] %}<span class="badge critical">Voided</span>{% endif %}
   <p class="panel-desc">Date: {{ sale['timestamp'] }} · Sold by: {{ sale['username'] }}</p>
   <p class="panel-desc">Patient: {{ sale['patient_name'] or 'Walk-in' }}</p>
+  <p class="panel-desc">Prescribed by: {{ sale['doctor_name'] or 'Not specified' }}</p>
+  <p class="panel-desc">Payment: {{ 'Cash' if sale['payment_method'] == 'cash' else 'Online' }}</p>
+  {% if sale['payment_method'] == 'cash' and sale['tender_amount'] is not none %}
+  <p class="panel-desc">Tender: Rs {{ "%.2f"|format(sale['tender_amount']) }} · Change: Rs {{ "%.2f"|format(sale['change_amount']) }}</p>
+  {% endif %}
   <div class="table-scroll">
     <table>
       <thead>

@@ -11,7 +11,8 @@ def _is_number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, patient_name=None):
+def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, patient_name=None,
+                 doctor_name=None, payment_method="cash", tender_amount=None):
     if not items:
         raise ValueError("sale must include at least one item")
     if discount_mode not in ("none", "item", "bill"):
@@ -20,6 +21,13 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, p
         raise ValueError("bill_discount_percent must be a number")
     if discount_mode != "bill" and bill_discount_percent != 0:
         raise ValueError("bill_discount_percent must be 0 unless discount_mode is 'bill'")
+    if payment_method not in ("cash", "online"):
+        raise ValueError("payment_method must be 'cash' or 'online'")
+    if tender_amount is not None:
+        if not _is_number(tender_amount):
+            raise ValueError("tender_amount must be a number")
+        if payment_method != "cash":
+            raise ValueError("tender_amount must not be given unless payment_method is 'cash'")
 
     db = get_db()
     prepared = []
@@ -100,12 +108,25 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, p
     subtotal_before_discount = round(subtotal_before_discount, 2)
     discount_amount = round(subtotal_before_discount - total, 2)
 
+    if payment_method == "cash":
+        if tender_amount is None:
+            # No tender given: treat as tendered exactly the total (zero change). This
+            # keeps existing direct create_sale(...) call sites working unmodified.
+            change_amount = 0.0
+        else:
+            if tender_amount < total:
+                raise ValueError(f"tender_amount must not be less than the total (Rs {total:.2f})")
+            change_amount = round(tender_amount - total, 2)
+    else:
+        change_amount = None
+
     cur = db.execute(
         "INSERT INTO sales (user_id, timestamp, patient_name, subtotal_before_discount, discount_mode, "
-        "bill_discount_percent, discount_amount, total, voided) "
-        "VALUES (?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, 0)",
+        "bill_discount_percent, discount_amount, total, voided, doctor_name, payment_method, "
+        "tender_amount, change_amount) "
+        "VALUES (?, datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
         (user_id, patient_name, subtotal_before_discount, discount_mode, bill_discount_percent,
-         discount_amount, total),
+         discount_amount, total, doctor_name, payment_method, tender_amount, change_amount),
     )
     sale_id = cur.lastrowid
     for p in prepared:
@@ -123,7 +144,7 @@ def create_sale(user_id, items, discount_mode="none", bill_discount_percent=0, p
         )
     db.commit()
     return {"sale_id": sale_id, "total": total, "discount_amount": discount_amount,
-            "subtotal_before_discount": subtotal_before_discount}
+            "subtotal_before_discount": subtotal_before_discount, "change_amount": change_amount}
 
 
 def void_sale(sale_id):
@@ -274,11 +295,23 @@ def finalize():
             raise ValueError("sale must include at least one item")
 
         patient_name = (payload.get("patient_name") or "").strip() or None
+        doctor_name = (payload.get("doctor_name") or "").strip() or None
+        payment_method = payload.get("payment_method", "cash")
+        tender_amount = payload.get("tender_amount")
+        # Stricter than create_sale's library default: a cash payment coming through the
+        # actual POS UI must always include an explicit tender_amount. This keeps the
+        # permissive create_sale default (omitted tender => zero change) from masking a
+        # real missing-tender bug in the finalize flow.
+        if payment_method == "cash" and tender_amount is None:
+            raise ValueError("tender_amount is required for cash payments")
         result = create_sale(
             user["id"], items,
             discount_mode=payload.get("discount_mode", "none"),
             bill_discount_percent=payload.get("bill_discount_percent", 0),
             patient_name=patient_name,
+            doctor_name=doctor_name,
+            payment_method=payment_method,
+            tender_amount=tender_amount,
         )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

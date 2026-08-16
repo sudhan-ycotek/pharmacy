@@ -8,9 +8,15 @@
     <input type="text" id="search-box" placeholder="Search medicine by name…" autocomplete="off" autofocus>
   </div>
   <div id="search-results" class="search-results"></div>
-  <div class="field" style="margin-top:12px; max-width:320px">
-    <label>Patient Name (optional)</label>
-    <input type="text" id="patient-name-input" placeholder="Walk-in customer" autocomplete="off">
+  <div class="field-row" style="margin-top:12px">
+    <div class="field" style="max-width:320px">
+      <label>Patient Name (optional)</label>
+      <input type="text" id="patient-name-input" placeholder="Walk-in customer" autocomplete="off">
+    </div>
+    <div class="field" style="max-width:320px">
+      <label>Prescribed By (optional)</label>
+      <input type="text" id="doctor-name-input" placeholder="Doctor name" autocomplete="off">
+    </div>
   </div>
 </div>
 
@@ -35,6 +41,24 @@
     <div class="field" id="bill-discount-field" style="display:none">
       <label>Bill discount % (max <span id="bill-discount-max">0</span>%)</label>
       <input type="number" id="bill-discount-input" min="0" step="0.1" value="0">
+    </div>
+  </div>
+
+  <div class="field-row" style="margin-bottom:12px">
+    <div class="field">
+      <label>Payment Method</label>
+      <div class="unit-toggle" id="payment-method-toggle">
+        <button type="button" class="btn btn-secondary selected" data-method="cash">Cash</button>
+        <button type="button" class="btn btn-secondary" data-method="online">Online</button>
+      </div>
+    </div>
+    <div class="field" id="tender-field" style="max-width:200px">
+      <label>Tender Amount</label>
+      <input type="number" id="tender-input" min="0" step="0.01" placeholder="0.00">
+    </div>
+    <div class="field" id="change-field" style="max-width:200px">
+      <label>Change</label>
+      <div id="change-display" class="num" style="padding-top:8px; font-weight:600">Rs 0.00</div>
     </div>
   </div>
 
@@ -87,6 +111,7 @@ var highlightedIndex = -1;
 var activeMedicine = null;
 var activeUnitIndex = 0;
 var discountMode = "none";
+var paymentMethod = "cash";
 
 function displayUnitName(name) { return name === "File" ? "Strip" : name; }
 
@@ -270,6 +295,28 @@ function recalcTotals() {
   var maxBillDiscount = billMaxDiscount();
   document.getElementById("bill-discount-max").textContent = maxBillDiscount;
   document.getElementById("bill-discount-input").max = String(maxBillDiscount);
+
+  updateChangeDisplay(total);
+}
+
+// Live Change = Tender - Total, only meaningful while Cash is the active payment method.
+function updateChangeDisplay(total) {
+  var changeDisplay = document.getElementById("change-display");
+  if (paymentMethod !== "cash") {
+    changeDisplay.textContent = "Rs 0.00";
+    changeDisplay.style.color = "";
+    return;
+  }
+  var tenderRaw = document.getElementById("tender-input").value;
+  var tender = tenderRaw === "" ? NaN : parseFloat(tenderRaw);
+  if (isNaN(tender)) {
+    changeDisplay.textContent = "Rs 0.00";
+    changeDisplay.style.color = "";
+    return;
+  }
+  var change = tender - total;
+  changeDisplay.textContent = "Rs " + change.toFixed(2);
+  changeDisplay.style.color = change < 0 ? "var(--danger, #c0392b)" : "";
 }
 
 function renderBill() {
@@ -372,11 +419,43 @@ document.getElementById("bill-discount-input").addEventListener("input", functio
   renderBill();
 });
 
+document.querySelectorAll("#payment-method-toggle button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    paymentMethod = btn.dataset.method;
+    document.querySelectorAll("#payment-method-toggle button").forEach(function (b) {
+      b.classList.toggle("selected", b === btn);
+    });
+    document.getElementById("tender-field").style.display = paymentMethod === "cash" ? "" : "none";
+    document.getElementById("change-field").style.display = paymentMethod === "cash" ? "" : "none";
+    if (paymentMethod !== "cash") { document.getElementById("tender-input").value = ""; }
+    recalcTotals();
+  });
+});
+document.getElementById("tender-input").addEventListener("input", recalcTotals);
+
 function finalizeSale() {
   var errorBox = document.getElementById("bill-error");
   errorBox.style.display = "none";
   if (bill.length === 0) { return; }
   var billDiscountValue = discountMode === "bill" ? (parseFloat(document.getElementById("bill-discount-input").value) || 0) : 0;
+
+  var tenderAmount = null;
+  if (paymentMethod === "cash") {
+    var tenderRaw = document.getElementById("tender-input").value;
+    var currentTotal = bill.reduce(function (sum, item) { return sum + lineSubtotal(item); }, 0);
+    if (tenderRaw === "" || isNaN(parseFloat(tenderRaw))) {
+      errorBox.textContent = "Enter a tender amount for cash payment.";
+      errorBox.style.display = "block";
+      return;
+    }
+    tenderAmount = parseFloat(tenderRaw);
+    if (tenderAmount < currentTotal) {
+      errorBox.textContent = "Tender amount is less than the bill total.";
+      errorBox.style.display = "block";
+      return;
+    }
+  }
+
   fetch("/sales", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -384,6 +463,9 @@ function finalizeSale() {
       discount_mode: discountMode,
       bill_discount_percent: billDiscountValue,
       patient_name: document.getElementById("patient-name-input").value.trim(),
+      doctor_name: document.getElementById("doctor-name-input").value.trim(),
+      payment_method: paymentMethod,
+      tender_amount: tenderAmount,
       items: bill.map(function (i) {
         return {
           medicine_id: i.medicine_id, unit_name: i.unit_name,

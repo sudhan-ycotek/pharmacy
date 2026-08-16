@@ -120,7 +120,10 @@ def test_finalize_sale_route_creates_sale_and_returns_redirect(admin_client, app
     medicine_id = _setup_medicine(app)
     response = admin_client.post(
         "/sales",
-        json={"items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}]},
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "tender_amount": 5,
+        },
     )
     assert response.status_code == 200
     data = response.get_json()
@@ -134,6 +137,7 @@ def test_finalize_sale_route_persists_patient_name(admin_client, app):
         json={
             "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
             "patient_name": "Archana Giri",
+            "tender_amount": 5,
         },
     )
     data = response.get_json()
@@ -149,6 +153,7 @@ def test_finalize_sale_route_blank_patient_name_stored_as_none(admin_client, app
         json={
             "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
             "patient_name": "   ",
+            "tender_amount": 5,
         },
     )
     data = response.get_json()
@@ -164,6 +169,7 @@ def test_receipt_shows_patient_name_or_walk_in(admin_client, app):
         json={
             "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
             "patient_name": "Archana Giri",
+            "tender_amount": 5,
         },
     )
     sale_id = response.get_json()["sale_id"]
@@ -172,7 +178,10 @@ def test_receipt_shows_patient_name_or_walk_in(admin_client, app):
 
     response2 = admin_client.post(
         "/sales",
-        json={"items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}]},
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}],
+            "tender_amount": 2.5,
+        },
     )
     sale_id2 = response2.get_json()["sale_id"]
     body2 = admin_client.get(f"/sales/{sale_id2}/receipt").get_data(as_text=True)
@@ -514,3 +523,203 @@ def test_daily_sales_totals_only_returns_days_with_sales(app):
     with app.app_context():
         rows = daily_sales_totals(days=7)
         assert rows == []
+
+
+def test_create_sale_computes_tender_and_change_for_cash(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        # 4 tablets @ 2.5 = 10.0 total.
+        result = create_sale(
+            user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}],
+            payment_method="cash", tender_amount=15,
+        )
+        assert result["total"] == pytest.approx(10.0)
+        assert result["change_amount"] == pytest.approx(5.0)
+        sale = get_sale(result["sale_id"])
+        assert sale["sale"]["payment_method"] == "cash"
+        assert sale["sale"]["tender_amount"] == pytest.approx(15)
+        assert sale["sale"]["change_amount"] == pytest.approx(5.0)
+
+
+def test_create_sale_cash_omitted_tender_defaults_to_zero_change(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        # payment_method defaults to "cash" and tender_amount is omitted entirely, mirroring
+        # the ~30 existing direct create_sale(...) call sites across the test suite.
+        result = create_sale(user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}])
+        assert result["change_amount"] == pytest.approx(0.0)
+        sale = get_sale(result["sale_id"])
+        assert sale["sale"]["payment_method"] == "cash"
+        assert sale["sale"]["tender_amount"] is None
+        assert sale["sale"]["change_amount"] == pytest.approx(0.0)
+
+
+def test_create_sale_rejects_cash_tender_less_than_total(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        # 4 tablets @ 2.5 = 10.0 total; tendering 5 is genuinely insufficient.
+        with pytest.raises(ValueError):
+            create_sale(
+                user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}],
+                payment_method="cash", tender_amount=5,
+            )
+
+
+def test_create_sale_rejects_tender_amount_for_online_payment(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        with pytest.raises(ValueError):
+            create_sale(
+                user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}],
+                payment_method="online", tender_amount=10,
+            )
+
+
+def test_create_sale_online_payment_has_no_tender_or_change(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(
+            user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}],
+            payment_method="online",
+        )
+        assert result["change_amount"] is None
+        sale = get_sale(result["sale_id"])
+        assert sale["sale"]["payment_method"] == "online"
+        assert sale["sale"]["tender_amount"] is None
+        assert sale["sale"]["change_amount"] is None
+
+
+def test_create_sale_rejects_invalid_payment_method(app):
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        with pytest.raises(ValueError):
+            create_sale(
+                user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}],
+                payment_method="cheque",
+            )
+
+
+def test_finalize_route_requires_explicit_tender_for_cash_payment(admin_client, app):
+    # This is the stricter route-level contract: create_sale is happy to default a missing
+    # cash tender to "exact change", but the actual POS finalize route must not accept a
+    # cash payment silently missing its tender_amount.
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "cash",
+        },
+    )
+    assert response.status_code == 400
+    assert "tender_amount" in response.get_json()["error"]
+
+
+def test_finalize_route_accepts_cash_payment_with_explicit_tender(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "cash",
+            "tender_amount": 10,
+        },
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    # 2 tablets @ 2.5 = 5.0 total; tendered 10 => change 5.0.
+    assert data["change_amount"] == pytest.approx(5.0)
+    with app.app_context():
+        sale = get_sale(data["sale_id"])
+        assert sale["sale"]["tender_amount"] == pytest.approx(10)
+        assert sale["sale"]["change_amount"] == pytest.approx(5.0)
+
+
+def test_finalize_route_rejects_tender_amount_for_online_payment(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "online",
+            "tender_amount": 10,
+        },
+    )
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+
+
+def test_finalize_route_online_payment_without_tender_succeeds(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "online",
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_finalize_route_persists_doctor_name(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "cash",
+            "tender_amount": 10,
+            "doctor_name": "Dr. Shrestha",
+        },
+    )
+    data = response.get_json()
+    with app.app_context():
+        sale = get_sale(data["sale_id"])
+        assert sale["sale"]["doctor_name"] == "Dr. Shrestha"
+
+
+def test_receipt_shows_doctor_payment_method_and_tender_change_for_cash(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "cash",
+            "tender_amount": 10,
+            "doctor_name": "Dr. Shrestha",
+        },
+    )
+    sale_id = response.get_json()["sale_id"]
+    body = admin_client.get(f"/sales/{sale_id}/receipt").get_data(as_text=True)
+    assert "Dr. Shrestha" in body
+    assert "Cash" in body
+    assert "Tender: Rs 10.00" in body
+    assert "Change: Rs 5.00" in body
+
+
+def test_receipt_hides_tender_and_change_for_online_payment(admin_client, app):
+    medicine_id = _setup_medicine(app)
+    response = admin_client.post(
+        "/sales",
+        json={
+            "items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 2}],
+            "payment_method": "online",
+        },
+    )
+    sale_id = response.get_json()["sale_id"]
+    body = admin_client.get(f"/sales/{sale_id}/receipt").get_data(as_text=True)
+    assert "Online" in body
+    assert "Tender:" not in body
+    assert "Not specified" in body
