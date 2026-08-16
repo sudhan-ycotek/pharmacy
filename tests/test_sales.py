@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from db import get_db
@@ -924,6 +926,48 @@ def test_list_sale_returns_includes_items(app):
         assert returns[0]["items"][0]["medicine_name"] == "Cetamol"
 
 
+def test_create_sale_return_scoped_by_sale_item_not_medicine_and_unit(app):
+    """The reason returns are scoped by sale_item_id rather than (medicine_id,
+    unit_name): a single sale can legitimately hold two line items for the same
+    medicine+unit sold at different per-item discounted prices. A return against
+    one specific sale_item_id must price itself off that line's own unit_price
+    and must leave the other line's returnable quantity completely untouched."""
+    medicine_id = _setup_medicine(app, max_discount_percent=20)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        result = create_sale(user_id, [
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4, "discount_percent": 0},
+            {"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 6, "discount_percent": 10},
+        ], discount_mode="item")
+        items = get_sale(result["sale_id"])["items"]
+        line_a = next(i for i in items if i["discount_percent"] == 0)  # unit_price 2.5
+        line_b = next(i for i in items if i["discount_percent"] == 10)  # unit_price 2.25
+        assert line_a["unit_price"] == pytest.approx(2.5)
+        assert line_b["unit_price"] == pytest.approx(2.25)
+
+        stock_before = get_medicine(medicine_id)["stock_in_base_units"]
+
+        ret = create_sale_return(
+            result["sale_id"], [{"sale_item_id": line_b["id"], "quantity": 3}], "wrong_item", user_id,
+        )
+        # (a) return succeeds, priced off line_b's own unit_price (2.25), not line_a's (2.5).
+        assert ret["total_amount"] == pytest.approx(3 * 2.25)
+        assert get_medicine(medicine_id)["stock_in_base_units"] == stock_before + 3
+
+        # (b) line_a's returnable quantity is entirely unaffected by a return
+        # against line_b, despite sharing the same medicine_id and unit_name.
+        assert returnable_sale_item_quantity(line_a["id"]) == 4
+        assert returnable_sale_item_quantity(line_b["id"]) == 6 - 3
+
+        # (c) the recorded return item reflects only the targeted line.
+        returns = list_sale_returns(result["sale_id"])
+        assert len(returns) == 1
+        assert len(returns[0]["items"]) == 1
+        assert returns[0]["items"][0]["sale_item_id"] == line_b["id"]
+        assert returns[0]["items"][0]["unit_price"] == pytest.approx(2.25)
+
+
 def test_sale_returns_lookup_route_rejects_staff(staff_client):
     assert staff_client.get("/sales/returns").status_code == 403
 
@@ -1097,6 +1141,43 @@ def test_sales_register_nets_out_return_amount_without_mutating_sale_total(app):
         assert row["net_total"] == pytest.approx(5.0)
         # The underlying sales.total column itself is never mutated by a return.
         assert get_sale(sale_id)["sale"]["total"] == pytest.approx(10.0)
+
+
+def _stat_card_value(body, label):
+    match = re.search(
+        r'<div class="label">' + re.escape(label) + r'</div>\s*<div class="value">Rs\s*([\d.]+)</div>',
+        body,
+    )
+    assert match, f"could not find stat card for {label!r} in response body"
+    return float(match.group(1))
+
+
+def test_sales_register_route_excludes_voided_sale_from_stat_totals(admin_client, app):
+    """sales_register()'s row list intentionally includes voided sales (same as
+    sales_list.html: shown in the table with a Voided badge), and void_sale never
+    zeroes sales.total -- so the Gross Sales / Returned / Net Revenue stat cards
+    must explicitly exclude voided sales when summing, the same way
+    today_sales_total()/daily_sales_totals() already do."""
+    medicine_id = _setup_medicine(app)
+    resp = admin_client.post(
+        "/sales",
+        json={"items": [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 4}], "tender_amount": 10},
+    )
+    sale_id = resp.get_json()["sale_id"]
+    # 4 tablets @ 2.5 = 10.0 total.
+    admin_client.post(f"/sales/{sale_id}/void")
+
+    body = admin_client.get("/sales/register").get_data(as_text=True)
+
+    # The voided sale still appears in the row list with its original total and a Voided badge.
+    assert "Voided" in body
+    assert "Rs 10.00" in body
+
+    # But it must not count toward the stat-card totals -- the only sale is voided,
+    # so every stat card must read zero.
+    assert _stat_card_value(body, "Gross Sales") == pytest.approx(0.0)
+    assert _stat_card_value(body, "Returned") == pytest.approx(0.0)
+    assert _stat_card_value(body, "Net Revenue") == pytest.approx(0.0)
 
 
 def test_sales_register_search_matches_patient_doctor_or_username(app):

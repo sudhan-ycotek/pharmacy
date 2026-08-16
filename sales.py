@@ -489,10 +489,16 @@ def sales_register_view():
     date_to = request.args.get("date_to") or None
     search_term = request.args.get("q") or None
     sales = sales_register(date_from=date_from, date_to=date_to, search=search_term)
+    # The row list intentionally includes voided sales (same as sales_list.html,
+    # shown with a "Voided" badge) -- but a voided sale's total is never zeroed
+    # out in the sales table, so it must be excluded from these stat-card sums
+    # the same way today_sales_total() / daily_sales_totals() already exclude
+    # voided sales from their revenue figures.
+    non_voided = [s for s in sales if not s["voided"]]
     totals = {
-        "gross": sum(s["total"] for s in sales),
-        "returned": sum(s["returned_amount"] for s in sales),
-        "net": sum(s["net_total"] for s in sales),
+        "gross": sum(s["total"] for s in non_voided),
+        "returned": sum(s["returned_amount"] for s in non_voided),
+        "net": sum(s["net_total"] for s in non_voided),
     }
     return render_template(
         "sales_register.html", sales=sales, date_from=date_from, date_to=date_to,
