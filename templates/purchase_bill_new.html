@@ -222,12 +222,31 @@ function renderResults() {
   currentResults.forEach(function (m, i) {
     var row = document.createElement("div");
     row.className = "search-result" + (i === highlightedIndex ? " highlighted" : "");
-    var infoDiv = document.createElement("div");
-    var nameDiv = document.createElement("div");
-    nameDiv.className = "med-name";
-    nameDiv.textContent = m.name;
-    infoDiv.appendChild(nameDiv);
-    row.appendChild(infoDiv);
+
+    var cols = document.createElement("div");
+    cols.className = "search-result-cols";
+
+    var nameCol = document.createElement("div");
+    nameCol.className = "search-result-col col-name med-name";
+    nameCol.textContent = m.name;
+    cols.appendChild(nameCol);
+
+    var companyCol = document.createElement("div");
+    companyCol.className = "search-result-col col-company";
+    companyCol.textContent = m.company_name || "—";
+    cols.appendChild(companyCol);
+
+    var costCol = document.createElement("div");
+    costCol.className = "search-result-col col-price num";
+    costCol.textContent = m.cost_price_per_base_unit ? "Rs " + m.cost_price_per_base_unit.toFixed(2) : "—";
+    cols.appendChild(costCol);
+
+    var mrpCol = document.createElement("div");
+    mrpCol.className = "search-result-col col-price num";
+    mrpCol.textContent = m.mrp_per_base_unit ? "Rs " + m.mrp_per_base_unit.toFixed(2) : "—";
+    cols.appendChild(mrpCol);
+
+    row.appendChild(cols);
     row.addEventListener("click", function () { selectMedicine(i); });
     resultsBox.appendChild(row);
   });

@@ -21,7 +21,8 @@ from purchases import (
     void_purchase_return,
 )
 from vendors import add_vendor
-from helpers import make_box_file_medicine
+from companies import add_company
+from helpers import make_box_file_medicine, make_stock
 
 
 def _cetamol_item(quantity=2, unit_name="Box",
@@ -380,6 +381,29 @@ def test_search_medicines_for_purchase_includes_box_unit(app):
         assert len(results) == 1
         unit_names = {u["unit_name"] for u in results[0]["units"]}
         assert "Box" in unit_names
+
+
+def test_search_medicines_for_purchase_includes_company_cost_and_mrp(app):
+    with app.app_context():
+        company_id = add_company("Cipla")
+        from inventory import add_medicine
+        medicine_id = add_medicine("Cetamol", "box_file", 10, tablets_per_file=20,
+                                    files_per_box=12, company_id=company_id)
+        make_stock(medicine_id, cost_price_per_base_unit=1.5, mrp_per_base_unit=3.0)
+
+        results = search_medicines_for_purchase("ceta")
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "Cipla"
+        assert results[0]["cost_price_per_base_unit"] == 1.5
+        assert results[0]["mrp_per_base_unit"] == 3.0
+
+
+def test_search_medicines_for_purchase_company_name_none_when_unlinked(app):
+    with app.app_context():
+        make_box_file_medicine(name="Cetamol")
+        results = search_medicines_for_purchase("ceta")
+        assert results[0]["company_name"] is None
 
 
 # --- purchase returns -------------------------------------------------------

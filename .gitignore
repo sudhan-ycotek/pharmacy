@@ -13,3 +13,4 @@ dist/
 *.spec
 .claude/
 .worktrees/
+design/

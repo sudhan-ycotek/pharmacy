@@ -291,6 +291,9 @@ def search_medicines_for_purchase(query):
         results.append({
             "id": m["id"], "name": m["name"], "packaging_type": m["packaging_type"],
             "max_discount_percent": m["max_discount_percent"],
+            "company_name": m["company_name"],
+            "cost_price_per_base_unit": m["cost_price_per_base_unit"],
+            "mrp_per_base_unit": m["mrp_per_base_unit"],
             "units": [{"unit_name": u["unit_name"]} for u in units],
         })
     return results
