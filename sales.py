@@ -1,10 +1,12 @@
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from auth import current_user, login_required, role_required
 from db import get_db
 from inventory import search_medicines, sellable_units
 
 bp = Blueprint("sales", __name__, url_prefix="/sales")
+
+SALE_RETURN_REASONS = ("wrong_item", "customer_request", "adverse_reaction", "other")
 
 
 def _is_number(value):
@@ -154,6 +156,14 @@ def void_sale(sale_id):
         raise ValueError(f"sale {sale_id} not found")
     if sale["voided"]:
         raise ValueError(f"sale {sale_id} already voided")
+    active_returns = db.execute(
+        "SELECT COUNT(*) AS c FROM sale_returns WHERE sale_id = ? AND voided = 0", (sale_id,)
+    ).fetchone()["c"]
+    if active_returns:
+        raise ValueError(
+            f"cannot void sale {sale_id}: it has active sale returns against it -- "
+            "void those returns first"
+        )
 
     items = db.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchall()
     for item in items:
@@ -235,6 +245,203 @@ def list_sales(user_id=None):
     ).fetchall()
 
 
+def sales_register(date_from=None, date_to=None, search=None):
+    """Sales Register: every sale (voided or not) across the whole shop, optionally
+    scoped by a timestamp date range and/or a patient/doctor/username search term,
+    with each row's already-returned amount netted out via a joined subquery --
+    sales.total itself is never mutated by a return, so this is the only place
+    that number is adjusted for display.
+    """
+    db = get_db()
+    query = """
+        SELECT s.*, u.username,
+               COALESCE(returns.total_returned, 0) AS returned_amount,
+               s.total - COALESCE(returns.total_returned, 0) AS net_total
+        FROM sales s
+        JOIN users u ON u.id = s.user_id
+        LEFT JOIN (
+            SELECT sale_id, SUM(total_amount) AS total_returned
+            FROM sale_returns WHERE voided = 0 GROUP BY sale_id
+        ) returns ON returns.sale_id = s.id
+    """
+    conditions = []
+    params = []
+    if date_from:
+        conditions.append("date(s.timestamp) >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("date(s.timestamp) <= ?")
+        params.append(date_to)
+    if search:
+        conditions.append("(s.patient_name LIKE ? OR s.doctor_name LIKE ? OR u.username LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY s.id DESC"
+    return db.execute(query, params).fetchall()
+
+
+# --- sale returns ------------------------------------------------------------
+
+def returnable_sale_item_quantity(sale_item_id):
+    """How many units of this specific sale line item are still eligible to
+    return -- what was sold on this line, minus what's already been returned
+    (and not voided) against it.
+
+    Scoped by sale_item_id rather than (medicine_id, unit_name) because a sale
+    can legitimately contain two line items for the same medicine+unit sold at
+    different per-item discounted prices -- each line's returnable quantity
+    must be tracked independently of the other.
+    """
+    db = get_db()
+    item = db.execute("SELECT * FROM sale_items WHERE id = ?", (sale_item_id,)).fetchone()
+    if item is None:
+        raise ValueError(f"sale item {sale_item_id} not found")
+    returned = db.execute(
+        "SELECT COALESCE(SUM(sri.quantity), 0) AS q FROM sale_return_items sri "
+        "JOIN sale_returns sr ON sr.id = sri.sale_return_id "
+        "WHERE sri.sale_item_id = ? AND sr.voided = 0",
+        (sale_item_id,),
+    ).fetchone()["q"]
+    return item["quantity"] - returned
+
+
+def create_sale_return(sale_id, items, reason, user_id):
+    if not items:
+        raise ValueError("sale return must include at least one item")
+    if reason not in SALE_RETURN_REASONS:
+        raise ValueError(f"reason must be one of: {', '.join(SALE_RETURN_REASONS)}")
+
+    db = get_db()
+    sale = db.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    if sale is None:
+        raise ValueError(f"sale {sale_id} not found")
+    if sale["voided"]:
+        raise ValueError(f"cannot return items from voided sale {sale_id}")
+
+    # --- validation pass: nothing is written until every item is confirmed valid ---
+    prepared = []
+    computed_total = 0.0
+    requested_totals = {}  # sale_item_id -> cumulative requested qty across this call
+    for item in items:
+        try:
+            sale_item_id = item["sale_item_id"]
+            quantity = item["quantity"]
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"invalid item structure: {e}")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive whole number")
+
+        sale_item = db.execute("SELECT * FROM sale_items WHERE id = ?", (sale_item_id,)).fetchone()
+        if sale_item is None:
+            raise ValueError(f"sale item {sale_item_id} not found")
+        if sale_item["sale_id"] != sale_id:
+            raise ValueError(f"sale item {sale_item_id} does not belong to sale {sale_id}")
+
+        # Sum requested quantities across every submitted item sharing this same
+        # sale_item_id -- not just this row -- so two return rows for the same
+        # line item can't each individually pass the returnable check while their
+        # combined total exceeds it.
+        requested_totals[sale_item_id] = requested_totals.get(sale_item_id, 0) + quantity
+        max_returnable = returnable_sale_item_quantity(sale_item_id)
+        if requested_totals[sale_item_id] > max_returnable:
+            raise ValueError(f"cannot return more than {max_returnable} of this item on this sale")
+
+        base_units = sale_item["qty_in_base_units"] * quantity
+        amount = round(sale_item["unit_price"] * quantity, 2)
+        computed_total += amount
+        prepared.append({
+            "sale_item_id": sale_item_id, "medicine_id": sale_item["medicine_id"],
+            "unit_name": sale_item["unit_name"], "quantity": quantity,
+            "qty_in_base_units": sale_item["qty_in_base_units"], "base_units": base_units,
+            "unit_price": sale_item["unit_price"], "amount": amount,
+        })
+
+    total_amount = round(computed_total, 2)
+
+    # --- write pass ---
+    cur = db.execute(
+        "INSERT INTO sale_returns (sale_id, return_date, reason, total_amount, "
+        "recorded_by_user_id, voided) VALUES (?, date('now', 'localtime'), ?, ?, ?, 0)",
+        (sale_id, reason, total_amount, user_id),
+    )
+    return_id = cur.lastrowid
+    for p in prepared:
+        db.execute(
+            "INSERT INTO sale_return_items (sale_return_id, sale_item_id, medicine_id, unit_name, "
+            "quantity, qty_in_base_units, base_units_returned, unit_price, amount) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (return_id, p["sale_item_id"], p["medicine_id"], p["unit_name"], p["quantity"],
+             p["qty_in_base_units"], p["base_units"], p["unit_price"], p["amount"]),
+        )
+        db.execute(
+            "UPDATE medicines SET stock_in_base_units = stock_in_base_units + ? WHERE id = ?",
+            (p["base_units"], p["medicine_id"]),
+        )
+    # Note: sales.total is never mutated here -- the Sales Register nets out
+    # returned amounts via a joined subquery instead (see sales_register()).
+    db.commit()
+    return {"sale_return_id": return_id, "total_amount": total_amount}
+
+
+def void_sale_return(return_id):
+    db = get_db()
+    ret = db.execute("SELECT * FROM sale_returns WHERE id = ?", (return_id,)).fetchone()
+    if ret is None:
+        raise ValueError(f"sale return {return_id} not found")
+    if ret["voided"]:
+        raise ValueError(f"sale return {return_id} already voided")
+
+    items = db.execute(
+        "SELECT * FROM sale_return_items WHERE sale_return_id = ?", (return_id,)
+    ).fetchall()
+
+    # Aggregate base units to remove per medicine (a single return can include more
+    # than one line item for the same medicine), then validate every medicine
+    # currently holds enough stock before mutating anything -- voiding a return
+    # must undo the restock, but the restocked units may since have been resold
+    # or adjusted away, which would otherwise drive stock negative.
+    needed_by_medicine = {}
+    for item in items:
+        needed_by_medicine[item["medicine_id"]] = (
+            needed_by_medicine.get(item["medicine_id"], 0) + item["base_units_returned"]
+        )
+
+    for medicine_id, needed in needed_by_medicine.items():
+        medicine = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()
+        if medicine["stock_in_base_units"] < needed:
+            raise ValueError(
+                f"cannot void return: not enough {medicine['name']} currently in stock "
+                "(some may have been resold or adjusted since the return)"
+            )
+
+    for medicine_id, needed in needed_by_medicine.items():
+        db.execute(
+            "UPDATE medicines SET stock_in_base_units = stock_in_base_units - ? WHERE id = ?",
+            (needed, medicine_id),
+        )
+    db.execute("UPDATE sale_returns SET voided = 1 WHERE id = ?", (return_id,))
+    db.commit()
+
+
+def list_sale_returns(sale_id):
+    db = get_db()
+    returns = db.execute(
+        "SELECT * FROM sale_returns WHERE sale_id = ? ORDER BY id DESC",
+        (sale_id,),
+    ).fetchall()
+    result = []
+    for r in returns:
+        items = db.execute(
+            "SELECT sri.*, m.name AS medicine_name FROM sale_return_items sri "
+            "JOIN medicines m ON m.id = sri.medicine_id WHERE sri.sale_return_id = ?",
+            (r["id"],),
+        ).fetchall()
+        result.append({"return": r, "items": items})
+    return result
+
+
 @bp.route("/new")
 @login_required
 def new_sale():
@@ -273,6 +480,48 @@ def search():
             ],
         })
     return jsonify(results)
+
+
+@bp.route("/register")
+@role_required("admin")
+def sales_register_view():
+    date_from = request.args.get("date_from") or None
+    date_to = request.args.get("date_to") or None
+    search_term = request.args.get("q") or None
+    sales = sales_register(date_from=date_from, date_to=date_to, search=search_term)
+    totals = {
+        "gross": sum(s["total"] for s in sales),
+        "returned": sum(s["returned_amount"] for s in sales),
+        "net": sum(s["net_total"] for s in sales),
+    }
+    return render_template(
+        "sales_register.html", sales=sales, date_from=date_from, date_to=date_to,
+        search=search_term, totals=totals,
+    )
+
+
+@bp.route("/returns")
+@role_required("admin")
+def sale_returns_lookup_view():
+    return render_template("sales_return.html")
+
+
+@bp.route("/returns/search")
+@role_required("admin")
+def sale_returns_search_view():
+    query = request.args.get("q", "")
+    db = get_db()
+    if not query.strip():
+        rows = []
+    else:
+        rows = db.execute(
+            "SELECT s.id, s.timestamp, s.patient_name, s.doctor_name, s.total, u.username "
+            "FROM sales s JOIN users u ON u.id = s.user_id "
+            "WHERE s.voided = 0 AND s.patient_name LIKE ? "
+            "ORDER BY s.id DESC LIMIT 20",
+            (f"%{query}%",),
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 @bp.route("", methods=["POST"])
@@ -328,7 +577,10 @@ def receipt(sale_id):
     if user["role"] != "admin" and sale["sale"]["user_id"] != user["id"]:
         abort(403)
     total_profit = sum(i["profit"] for i in sale["items"])
-    return render_template("receipt.html", sale=sale["sale"], items=sale["items"], total_profit=total_profit)
+    return render_template(
+        "receipt.html", sale=sale["sale"], items=sale["items"], total_profit=total_profit,
+        returns=list_sale_returns(sale_id),
+    )
 
 
 @bp.route("/<int:sale_id>/void", methods=["POST"])
@@ -339,3 +591,45 @@ def void(sale_id):
     except ValueError as e:
         return str(e), 400
     return redirect(url_for("sales.receipt", sale_id=sale_id))
+
+
+@bp.route("/<int:sale_id>/items/<int:item_id>/returnable")
+@role_required("admin")
+def sale_item_returnable_view(sale_id, item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?", (item_id, sale_id)).fetchone()
+    if item is None:
+        return "Sale item not found", 404
+    return jsonify({"returnable": returnable_sale_item_quantity(item_id)})
+
+
+@bp.route("/<int:sale_id>/returns", methods=["POST"])
+@role_required("admin")
+def create_sale_return_view(sale_id):
+    user = current_user()
+    try:
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("return must include at least one item")
+        reason = payload.get("reason") or "other"
+        result = create_sale_return(sale_id, items, reason, user["id"])
+    except (ValueError, KeyError, TypeError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
+
+
+@bp.route("/returns/<int:return_id>/void", methods=["POST"])
+@role_required("admin")
+def void_sale_return_view(return_id):
+    db = get_db()
+    ret = db.execute("SELECT sale_id FROM sale_returns WHERE id = ?", (return_id,)).fetchone()
+    if ret is None:
+        return "Sale return not found", 404
+    try:
+        void_sale_return(return_id)
+    except ValueError as e:
+        flash(str(e))
+    return redirect(url_for("sales.receipt", sale_id=ret["sale_id"]))

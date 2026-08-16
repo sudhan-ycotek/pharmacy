@@ -2,6 +2,15 @@
 {% block page_title %}Sales History{% endblock %}
 {% block page_desc %}Browse past sales; admins can void one to restore its stock.{% endblock %}
 {% block content %}
+{% if session.get('role') == 'admin' %}
+<div class="panel-head" style="margin-bottom:14px">
+  <div></div>
+  <div style="display:flex; gap:10px">
+    <a href="{{ url_for('sales.sale_returns_lookup_view') }}" class="btn btn-secondary">Sales Return</a>
+    <a href="{{ url_for('sales.sales_register_view') }}" class="btn btn-primary">Sales Register</a>
+  </div>
+</div>
+{% endif %}
 <div class="card panel">
   <div class="table-scroll">
     <table>

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block page_title %}Sales Return{% endblock %}
+{% block page_desc %}Search a patient by name to find their sale, then open its receipt to select items to return.{% endblock %}
+{% block content %}
+<div class="card panel">
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    <input type="text" id="patient-search-box" placeholder="Search patient name…" autocomplete="off" autofocus>
+  </div>
+  <div id="patient-search-results" class="table-scroll" style="margin-top:14px">
+    <table>
+      <thead><tr><th>Date</th><th>Patient</th><th>Doctor</th><th>Sold By</th><th class="num">Total</th><th></th></tr></thead>
+      <tbody id="patient-search-body"></tbody>
+    </table>
+  </div>
+  <p class="panel-desc" id="patient-search-empty">Start typing a patient name to find their sale.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+var searchInput = document.getElementById("patient-search-box");
+var resultsBody = document.getElementById("patient-search-body");
+var emptyMessage = document.getElementById("patient-search-empty");
+
+function renderResults(sales) {
+  resultsBody.innerHTML = "";
+  if (sales.length === 0) {
+    emptyMessage.style.display = "block";
+    return;
+  }
+  emptyMessage.style.display = "none";
+  sales.forEach(function (s) {
+    var row = document.createElement("tr");
+
+    var dateCell = document.createElement("td");
+    dateCell.textContent = s.timestamp;
+    row.appendChild(dateCell);
+
+    var patientCell = document.createElement("td");
+    patientCell.textContent = s.patient_name || "Walk-in";
+    row.appendChild(patientCell);
+
+    var doctorCell = document.createElement("td");
+    doctorCell.textContent = s.doctor_name || "Not specified";
+    row.appendChild(doctorCell);
+
+    var soldByCell = document.createElement("td");
+    soldByCell.textContent = s.username;
+    row.appendChild(soldByCell);
+
+    var totalCell = document.createElement("td");
+    totalCell.className = "num";
+    totalCell.textContent = "Rs " + s.total.toFixed(2);
+    row.appendChild(totalCell);
+
+    var linkCell = document.createElement("td");
+    var link = document.createElement("a");
+    link.className = "btn btn-secondary btn-icon";
+    link.href = "/sales/" + s.id + "/receipt";
+    link.textContent = "Receipt →";
+    linkCell.appendChild(link);
+    row.appendChild(linkCell);
+
+    resultsBody.appendChild(row);
+  });
+}
+
+searchInput.addEventListener("input", function (e) {
+  var q = e.target.value.trim();
+  if (!q) {
+    resultsBody.innerHTML = "";
+    emptyMessage.textContent = "Start typing a patient name to find their sale.";
+    emptyMessage.style.display = "block";
+    return;
+  }
+  fetch("/sales/returns/search?q=" + encodeURIComponent(q))
+    .then(function (r) { return r.json(); })
+    .then(function (sales) {
+      if (sales.length === 0) {
+        emptyMessage.textContent = "No matching sales found.";
+      }
+      renderResults(sales);
+    });
+});
+</script>
+{% endblock %}

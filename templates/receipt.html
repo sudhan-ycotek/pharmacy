@@ -51,10 +51,53 @@
   <div class="no-print" style="display:flex; gap:10px; margin-top:16px;">
     <button class="btn btn-secondary" onclick="window.print()">Print</button>
     {% if session.get('role') == 'admin' and not sale['voided'] %}
+    <button type="button" class="btn btn-secondary" id="return-items-btn" onclick="openModal('return-modal')">Return Items</button>
     <button type="button" class="btn btn-danger" onclick="openModal('void-modal')">Void Sale</button>
     {% endif %}
   </div>
 </div>
+
+{% if session.get('role') == 'admin' %}
+<div class="card panel no-print">
+  <div class="panel-head">
+    <div>
+      <h2>Sales Returns</h2>
+      <p class="panel-desc">Items this patient has returned against this sale.</p>
+    </div>
+  </div>
+  {% if returns %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Date</th><th>Items</th><th>Reason</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for entry in returns %}
+      <tr>
+        <td>{{ entry['return']['return_date'] }}</td>
+        <td>
+          {% for it in entry['items'] %}
+          {{ it['medicine_name'] }} ({{ it['quantity'] }} {{ it['unit_name']|replace('File','Strip') }}){% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </td>
+        <td>{{ entry['return']['reason']|replace('_', ' ')|capitalize }}</td>
+        <td class="num">Rs {{ "%.2f"|format(entry['return']['total_amount']) }}</td>
+        <td>{% if entry['return']['voided'] %}<span class="badge critical">Voided</span>{% else %}<span class="badge good">Recorded</span>{% endif %}</td>
+        <td>
+          {% if not entry['return']['voided'] %}
+          <form method="post" action="{{ url_for('sales.void_sale_return_view', return_id=entry['return']['id']) }}">
+            <button type="submit" class="btn btn-secondary btn-icon">Void</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No returns recorded yet.</p>
+  {% endif %}
+</div>
+{% endif %}
 
 {% if session.get('role') == 'admin' and not sale['voided'] %}
 <div class="modal-backdrop" id="void-modal">
@@ -69,5 +112,96 @@
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="return-modal">
+  <div class="modal modal-lg">
+    <h3>Return Items from Sale #{{ sale['id'] }}</h3>
+    <div id="return-error" class="banner-error" style="display:none"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Medicine</th><th>Unit</th><th class="num">Returnable</th><th class="num">Return Qty</th></tr></thead>
+        <tbody id="return-items-body">
+        {% for item in items %}
+        <tr>
+          <td>{{ item['medicine_name'] }}</td>
+          <td>{{ item['unit_name']|replace('File','Strip') }}</td>
+          <td class="num returnable-cell" data-item-id="{{ item['id'] }}">…</td>
+          <td class="num">
+            <input type="number" class="return-qty-input" min="0" value="0" style="width:70px"
+                   data-item-id="{{ item['id'] }}">
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="field" style="margin-top:14px">
+      <label>Reason</label>
+      <select id="return-reason-select" autofocus>
+        <option value="wrong_item">Wrong item</option>
+        <option value="customer_request">Customer request</option>
+        <option value="adverse_reaction">Adverse reaction</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('return-modal')">Cancel</button>
+      <button type="button" class="btn btn-primary" id="return-confirm-btn">Record Return</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if session.get('role') == 'admin' and not sale['voided'] %}
+<script>
+var saleId = {{ sale['id'] }};
+
+function loadReturnableQuantities() {
+  document.querySelectorAll(".returnable-cell").forEach(function (cell) {
+    var itemId = cell.dataset.itemId;
+    fetch("/sales/" + saleId + "/items/" + itemId + "/returnable")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        cell.textContent = data.returnable;
+        var input = document.querySelector('.return-qty-input[data-item-id="' + itemId + '"]');
+        if (input) { input.max = data.returnable; }
+      });
+  });
+}
+document.getElementById("return-items-btn").addEventListener("click", loadReturnableQuantities);
+
+function submitReturn() {
+  var errorBox = document.getElementById("return-error");
+  errorBox.style.display = "none";
+  var items = [];
+  document.querySelectorAll(".return-qty-input").forEach(function (input) {
+    var qty = parseInt(input.value, 10);
+    if (qty > 0) {
+      items.push({ sale_item_id: parseInt(input.dataset.itemId, 10), quantity: qty });
+    }
+  });
+  if (items.length === 0) {
+    errorBox.textContent = "Enter a return quantity for at least one item.";
+    errorBox.style.display = "block";
+    return;
+  }
+  fetch("/sales/" + saleId + "/returns", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: items, reason: document.getElementById("return-reason-select").value }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.error) {
+        errorBox.textContent = data.error;
+        errorBox.style.display = "block";
+        return;
+      }
+      window.location.reload();
+    });
+}
+document.getElementById("return-confirm-btn").addEventListener("click", submitReturn);
+</script>
 {% endif %}
 {% endblock %}
