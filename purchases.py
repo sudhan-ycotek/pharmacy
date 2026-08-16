@@ -305,9 +305,16 @@ def returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=N
 
     When batch_number is omitted, this aggregates across every batch of this
     medicine/unit on the bill -- the original, backward-compatible behavior.
-    Passing batch_number scopes both the received and returned sums to that
-    one batch, so two batches of the same medicine on one bill return
-    independently of each other.
+    Passing batch_number scopes the received sum to that one batch, so two
+    batches of the same medicine on one bill return independently of each
+    other. The returned sum, however, must count BOTH prior returns that
+    named that exact batch AND prior returns that were submitted unscoped
+    (batch_number IS NULL) against the same medicine/unit on this bill --
+    an unscoped return doesn't record which batch it actually came from, so
+    it has to be conservatively counted against every batch's availability.
+    Otherwise an unscoped return followed by a scoped return of the same
+    goods would double-count what's still outstanding and allow an
+    over-return.
     """
     db = get_db()
     if batch_number is not None:
@@ -320,7 +327,7 @@ def returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=N
             "SELECT COALESCE(SUM(pri.quantity), 0) AS q FROM purchase_return_items pri "
             "JOIN purchase_returns pr ON pr.id = pri.purchase_return_id "
             "WHERE pr.purchase_bill_id = ? AND pri.medicine_id = ? AND pri.unit_name = ? "
-            "AND pri.batch_number = ? AND pr.voided = 0",
+            "AND (pri.batch_number = ? OR pri.batch_number IS NULL) AND pr.voided = 0",
             (purchase_bill_id, medicine_id, unit_name, batch_number),
         ).fetchone()["q"]
     else:
@@ -352,7 +359,12 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
     # --- validation pass ---
     prepared = []
     computed_total = 0.0
-    requested_totals = {}  # (medicine_id, unit_name, batch_number) -> cumulative requested qty
+    # (medicine_id, unit_name, batch_number) -> cumulative requested qty scoped to
+    # that exact batch (batch_number is not None here).
+    requested_by_batch = {}
+    # (medicine_id, unit_name) -> cumulative requested qty submitted unscoped
+    # (batch_number is None) for that medicine/unit.
+    requested_unscoped = {}
     for item in items:
         medicine_id = item["medicine_id"]
         unit_name = item["unit_name"]
@@ -368,14 +380,29 @@ def create_purchase_return(purchase_bill_id, items, reason, user_id):
         if unit_row is None:
             raise ValueError(f"unknown unit '{unit_name}' for medicine {medicine_id}")
 
-        # Sum requested quantities across every submitted item sharing this same
-        # (medicine, unit, batch) key -- not just this row -- so two return rows
-        # for the same line item can't each individually pass the returnable
-        # check while their combined total exceeds it.
-        key = (medicine_id, unit_name, batch_number)
-        requested_totals[key] = requested_totals.get(key, 0) + quantity
+        # Sum requested quantities across every submitted item sharing the same
+        # scope -- not just this row -- so multiple return rows for the same
+        # line item can't each individually pass the returnable check while
+        # their combined total exceeds it. An unscoped request and a
+        # batch-scoped request for the same medicine/unit compete for the same
+        # underlying receipt pool (mirroring returnable_quantity's own
+        # cross-scope accounting above), so each is checked against the
+        # combined total of same-scope requests plus opposite-scope requests
+        # for that medicine/unit, not two independent pools.
+        medicine_unit_key = (medicine_id, unit_name)
+        if batch_number is None:
+            requested_unscoped[medicine_unit_key] = requested_unscoped.get(medicine_unit_key, 0) + quantity
+            combined_requested = requested_unscoped[medicine_unit_key] + sum(
+                qty for (m_id, u_name, _batch), qty in requested_by_batch.items()
+                if (m_id, u_name) == medicine_unit_key
+            )
+        else:
+            batch_key = (medicine_id, unit_name, batch_number)
+            requested_by_batch[batch_key] = requested_by_batch.get(batch_key, 0) + quantity
+            combined_requested = requested_by_batch[batch_key] + requested_unscoped.get(medicine_unit_key, 0)
+
         max_returnable = returnable_quantity(purchase_bill_id, medicine_id, unit_name, batch_number=batch_number)
-        if requested_totals[key] > max_returnable:
+        if combined_requested > max_returnable:
             raise ValueError(f"cannot return more than {max_returnable} of this item on this bill")
 
         medicine = db.execute("SELECT * FROM medicines WHERE id = ?", (medicine_id,)).fetchone()

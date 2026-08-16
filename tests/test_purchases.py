@@ -592,6 +592,80 @@ def test_create_purchase_return_rejects_when_summed_rows_exceed_returnable(app):
         assert get_purchase_bill(purchase_bill_id)["total_amount"] == result["total_amount"]
 
 
+def test_create_purchase_return_scoped_request_sees_prior_unscoped_return(app):
+    """Regression test: a bill has a single batch/receipt of 10 boxes. An
+    unscoped return (no batch_number) is submitted for 6 of them, leaving 4
+    returnable. A later return that names that exact batch must see the
+    unscoped return as already counted against it -- an unscoped return
+    doesn't record which batch it came from, so it has to be conservatively
+    assumed to have come from every batch on the bill. Before the fix, the
+    batch-scoped branch of returnable_quantity only looked at other returns
+    that also named that same batch, so this second request (8, more than
+    the 4 actually remaining) would incorrectly be accepted and double-count
+    stock/bill-total reductions for goods only received once."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=10, cost_price_original=1.0, batch_number="B1"),
+                 medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        # Unscoped return for 6 of the 10 boxes.
+        create_purchase_return(
+            purchase_bill_id,
+            [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 6}],
+            "damaged", user_id,
+        )
+        assert returnable_quantity(purchase_bill_id, medicine_id, "Box", batch_number="B1") == 4
+
+        stock_before = get_medicine(medicine_id)["stock_in_base_units"]
+        bill_total_before = get_purchase_bill(purchase_bill_id)["total_amount"]
+
+        # Only 4 remain against batch B1 -- requesting 8 more (naming the batch)
+        # must be rejected, not silently accepted as it would be pre-fix.
+        with pytest.raises(ValueError):
+            create_purchase_return(
+                purchase_bill_id,
+                [{"medicine_id": medicine_id, "unit_name": "Box", "quantity": 8, "batch_number": "B1"}],
+                "damaged", user_id,
+            )
+        # Nothing further written -- stock and bill total unchanged by the rejected request.
+        assert get_medicine(medicine_id)["stock_in_base_units"] == stock_before
+        assert get_purchase_bill(purchase_bill_id)["total_amount"] == bill_total_before
+
+
+def test_create_purchase_return_rejects_combined_scoped_and_unscoped_rows_in_one_call(app):
+    """An unscoped row and a batch-scoped row for the same medicine/unit,
+    submitted together in one return call, must be validated against their
+    combined total -- they compete for the same underlying receipt pool, not
+    two independent ones."""
+    with app.app_context():
+        vendor_id = add_vendor("ABC Vendors")
+        medicine_id = make_box_file_medicine(name="Cetamol")
+        user_id = _make_admin(app)
+        result = create_purchase_bill(user_id, vendor_id, "2026-08-01", [
+            dict(_cetamol_item(quantity=10, cost_price_original=1.0, batch_number="B1"),
+                 medicine_id=medicine_id),
+        ])
+        purchase_bill_id = result["purchase_bill_id"]
+
+        with pytest.raises(ValueError):
+            create_purchase_return(
+                purchase_bill_id,
+                [
+                    {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 6},
+                    {"medicine_id": medicine_id, "unit_name": "Box", "quantity": 8, "batch_number": "B1"},
+                ],
+                "damaged", user_id,
+            )
+        # Nothing written -- validation fails before the write pass begins.
+        assert get_medicine(medicine_id)["stock_in_base_units"] == 10 * 240
+        assert get_purchase_bill(purchase_bill_id)["total_amount"] == result["total_amount"]
+
+
 def test_create_purchase_return_route_creates_return(admin_client, app):
     with app.app_context():
         vendor_id = add_vendor("ABC Vendors")

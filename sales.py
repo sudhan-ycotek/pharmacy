@@ -1,3 +1,5 @@
+import datetime
+
 from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from auth import current_user, login_required, role_required
@@ -487,6 +489,15 @@ def search():
 def sales_register_view():
     date_from = request.args.get("date_from") or None
     date_to = request.args.get("date_to") or None
+    if date_from is None and date_to is None:
+        # Mirror the Stock Balance Report's "default to today" convention:
+        # with no date range in the query string at all, sales_register()
+        # has no LIMIT and would otherwise select and render every sale ever
+        # recorded. A date-range report is better served by a sane default
+        # window than a hard row limit (which would silently truncate a
+        # legitimate wide-range query), so default to the start of the
+        # current month rather than a single day.
+        date_from = datetime.date.today().replace(day=1).isoformat()
     search_term = request.args.get("q") or None
     sales = sales_register(date_from=date_from, date_to=date_to, search=search_term)
     # The row list intentionally includes voided sales (same as sales_list.html,

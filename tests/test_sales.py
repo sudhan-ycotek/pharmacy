@@ -1,3 +1,4 @@
+import datetime
 import re
 
 import pytest
@@ -1209,3 +1210,43 @@ def test_sales_register_route_rejects_staff(staff_client):
 
 def test_sales_register_route_allows_admin(admin_client):
     assert admin_client.get("/sales/register").status_code == 200
+
+
+def test_sales_register_view_defaults_to_current_month_when_no_date_params(admin_client, app):
+    """sales_register() has no LIMIT, unlike list_sales() -- hitting the route
+    with no query string at all must not select and render every sale ever
+    recorded. The route should default date_from to the first day of the
+    current month (mirroring the Stock Balance Report's "default to today"
+    convention) rather than leaving the range unbounded."""
+    medicine_id = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        old_sale = create_sale(
+            user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}],
+            patient_name="Old Timer",
+        )
+        new_sale = create_sale(
+            user_id, [{"medicine_id": medicine_id, "unit_name": "Tablet", "quantity": 1}],
+            patient_name="Current Patient",
+        )
+        _set_sale_timestamp(old_sale["sale_id"], "2020-01-01 10:00:00")
+        # new_sale keeps its real "now" timestamp, which falls inside the current month.
+
+    resp = admin_client.get("/sales/register")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+
+    expected_date_from = datetime.date.today().replace(day=1).isoformat()
+    assert f'name="date_from" value="{expected_date_from}"' in body
+    assert 'name="date_to" value=""' in body
+
+    # Only the in-window sale appears in the rendered table.
+    assert "Current Patient" in body
+    assert "Old Timer" not in body
+
+    # An explicit date range must still be respected as before (no forced default).
+    resp = admin_client.get("/sales/register?date_from=2020-01-01&date_to=2020-01-31")
+    body = resp.get_data(as_text=True)
+    assert "Old Timer" in body
+    assert "Current Patient" not in body
