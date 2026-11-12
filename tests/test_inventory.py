@@ -1127,3 +1127,28 @@ def test_stock_balance_view_mrp_toggle_changes_value_shown(app, client, admin_us
     body = resp.get_data(as_text=True)
     # 240 base units at MRP 5.0/base unit = 1200.00
     assert "1200.00" in body
+
+
+def test_products_page_lists_batches_per_medicine(admin_client, app):
+    from db import get_db
+    from helpers import make_box_file_medicine, make_stock
+    with app.app_context():
+        m = make_box_file_medicine(name="MedA")
+        make_stock(m, "Tablet", 10)
+        make_stock(m, "Tablet", 20)
+        db = get_db()
+        ids = [r["id"] for r in db.execute("SELECT id FROM stock_receipts ORDER BY id")]
+        db.execute("UPDATE stock_receipts SET batch_number='BA-1', expiry_date='2027-03-01' WHERE id=?", (ids[0],))
+        db.execute("UPDATE stock_receipts SET batch_number='BA-2', expiry_date='2028-06-01' WHERE id=?", (ids[1],))
+        db.commit()
+
+        from inventory import batches_by_medicine
+        rows = batches_by_medicine()[m]
+        assert [(r["batch_number"], r["expiry_date"], r["base_units_received"]) for r in rows] == [
+            ("BA-1", "2027-03-01", 10), ("BA-2", "2028-06-01", 20),
+        ]
+
+    body = admin_client.get("/medicines/").get_data(as_text=True)
+    assert f'data-batch-for="{m}"' in body
+    assert "BA-1" in body and "2027-03-01" in body
+    assert "BA-2" in body and "2028-06-01" in body

@@ -158,3 +158,21 @@ a:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline
   .sidebar, .topbar .who, .no-print { display:none; }
   .app { grid-template-columns:1fr; }
 }
+
+.modal.modal-xl { max-width:960px; max-height:calc(100vh - 40px); display:flex; flex-direction:column; padding:22px 24px; }
+.modal-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px; }
+.modal-body { overflow:auto; min-height:0; }
+.modal-body thead th { position:sticky; top:0; background:var(--surface); z-index:1; }
+
+/* Products: click a row to show its purchase batches */
+#medicines-table tbody tr.medicine-row { cursor:pointer; }
+#medicines-table tbody tr.medicine-row:hover > td { background:var(--bg); }
+#medicines-table tbody tr.medicine-row.expanded > td { background:var(--bg); }
+.row-caret { display:inline-block; width:10px; color:var(--text-muted); transition:transform .15s; }
+tr.medicine-row.expanded .row-caret { transform:rotate(90deg); }
+tr.batch-row > td { background:var(--bg); padding:4px 18px 14px 46px; }
+.batch-table { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+.batch-table th, .batch-table td { font-size:12.5px; }
+
+.quick-range { display:flex; gap:8px; }
+.quick-range .btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }

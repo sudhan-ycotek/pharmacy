@@ -56,6 +56,12 @@
     <div class="value">{{ low_stock|length }}</div>
     <div class="sub">{{ "Need reordering soon" if low_stock else "All good" }}</div>
   </div>
+
+  <div class="card stat-card {{ 'alert' if expiring }}">
+    <div class="label">Near Expiry</div>
+    <div class="value">{{ expiring|length }}</div>
+    <div class="sub">{{ "Batches within " ~ expiry_alert_days ~ " days" if expiring else "No batches near expiry" }}</div>
+  </div>
 </div>
 
 <div class="action-row">
@@ -87,29 +93,112 @@
   {% endif %}
 </div>
 
+{% macro low_stock_table(rows) %}
+<div class="table-scroll">
+  <table>
+    <thead><tr><th>Code</th><th>Medicine</th><th class="num">Stock</th><th class="num">Threshold</th><th>Last Restock</th></tr></thead>
+    <tbody>
+    {% for m in rows %}
+    <tr>
+      <td>{{ m['code'] or '—' }}</td>
+      <td>{{ m['name'] }}</td>
+      <td class="num">{{ m['stock_in_base_units'] }}</td>
+      <td class="num">{{ m['low_stock_threshold'] }}</td>
+      <td>{{ m['last_restock'] or 'Never restocked' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro recent_stock_table(rows) %}
+<div class="table-scroll">
+  <table>
+    <thead><tr><th>Medicine</th><th>Batch No.</th><th>Expiry</th><th class="num">Quantity Received</th><th>Added On</th></tr></thead>
+    <tbody>
+    {% for b in rows %}
+    <tr>
+      <td>{{ b['medicine_name'] }}</td>
+      <td>{{ b['batch_number'] or '—' }}</td>
+      <td>{{ b['expiry_date'] or '—' }}</td>
+      <td class="num">{{ b['base_units_received'] }}</td>
+      <td>{{ b['created_at'] }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro expiring_table(rows) %}
+<div class="table-scroll">
+  <table>
+    <thead><tr><th>Code</th><th>Medicine</th><th>Batch No.</th><th>Expiry Date</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for b in rows %}
+    <tr>
+      <td>{{ b['medicine_code'] or '—' }}</td>
+      <td>{{ b['medicine_name'] }}</td>
+      <td>{{ b['batch_number'] or '—' }}</td>
+      <td>{{ b['expiry_date'] }}</td>
+      <td>
+        {% if b['days_left'] < 0 %}<span class="badge critical">Expired</span>
+        {% elif b['days_left'] == 0 %}<span class="badge critical">Expires today</span>
+        {% elif b['days_left'] <= 30 %}<span class="badge critical">{{ b['days_left'] }} days left</span>
+        {% else %}<span class="badge warn">{{ b['days_left'] }} days left</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro view_all_modal(id, title, desc, body) %}
+<div class="modal-backdrop" id="{{ id }}">
+  <div class="modal modal-xl" role="dialog" aria-modal="true" aria-labelledby="{{ id }}-title">
+    <div class="modal-head">
+      <div>
+        <h3 id="{{ id }}-title">{{ title }}</h3>
+        <p>{{ desc }}</p>
+      </div>
+      <button type="button" class="btn btn-secondary btn-icon" onclick="closeModal('{{ id }}')" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">{{ body }}</div>
+  </div>
+</div>
+{% endmacro %}
+
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Expiring Soon</h2>
+      <p class="panel-desc">Batches expiring within {{ expiry_alert_days }} days (or already expired) that are still in stock.</p>
+    </div>
+    {% if expiring|length > preview_rows %}
+    <button type="button" class="btn btn-secondary btn-icon" onclick="openModal('expiring-modal')">View all ({{ expiring|length }})</button>
+    {% endif %}
+  </div>
+  {% if expiring %}
+  {{ expiring_table(expiring[:preview_rows]) }}
+  {% else %}
+  <p class="panel-desc">No batches are near expiry.</p>
+  {% endif %}
+</div>
+
 <div class="card panel">
   <div class="panel-head">
     <div>
       <h2>Medicines running low</h2>
       <p class="panel-desc">Below their restock threshold.</p>
     </div>
+    {% if low_stock|length > preview_rows %}
+    <button type="button" class="btn btn-secondary btn-icon" onclick="openModal('low-stock-modal')">View all ({{ low_stock|length }})</button>
+    {% endif %}
   </div>
   {% if low_stock %}
-  <div class="table-scroll">
-    <table>
-      <thead><tr><th>Medicine</th><th class="num">Stock</th><th class="num">Threshold</th><th>Last Restock</th></tr></thead>
-      <tbody>
-      {% for m in low_stock %}
-      <tr>
-        <td>{{ m['name'] }}</td>
-        <td class="num">{{ m['stock_in_base_units'] }}</td>
-        <td class="num">{{ m['low_stock_threshold'] }}</td>
-        <td>{{ m['last_restock'] or 'Never restocked' }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {{ low_stock_table(low_stock[:preview_rows]) }}
   {% else %}
   <p class="panel-desc">No medicines are low on stock.</p>
   {% endif %}
@@ -121,22 +210,12 @@
       <h2>Recently Added Stock</h2>
       <p class="panel-desc">Stock received in the last 7 days.</p>
     </div>
+    {% if recent_stock|length > preview_rows %}
+    <button type="button" class="btn btn-secondary btn-icon" onclick="openModal('recent-stock-modal')">View all ({{ recent_stock|length }})</button>
+    {% endif %}
   </div>
   {% if recent_stock %}
-  <div class="table-scroll">
-    <table>
-      <thead><tr><th>Medicine</th><th class="num">Quantity Received</th><th>Added On</th></tr></thead>
-      <tbody>
-      {% for b in recent_stock %}
-      <tr>
-        <td>{{ b['medicine_name'] }}</td>
-        <td class="num">{{ b['base_units_received'] }}</td>
-        <td>{{ b['created_at'] }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {{ recent_stock_table(recent_stock[:preview_rows]) }}
   {% else %}
   <p class="panel-desc">No stock has been added in the last 7 days.</p>
   {% endif %}
@@ -180,4 +259,14 @@
   <p class="panel-desc">No sales recorded yet.</p>
   {% endif %}
 </div>
+
+{% if expiring|length > preview_rows %}
+{{ view_all_modal('expiring-modal', 'Expiring Soon', 'All ' ~ expiring|length ~ ' batches expiring within ' ~ expiry_alert_days ~ ' days or already expired.', expiring_table(expiring)) }}
+{% endif %}
+{% if low_stock|length > preview_rows %}
+{{ view_all_modal('low-stock-modal', 'Medicines running low', 'All ' ~ low_stock|length ~ ' medicines below their restock threshold.', low_stock_table(low_stock)) }}
+{% endif %}
+{% if recent_stock|length > preview_rows %}
+{{ view_all_modal('recent-stock-modal', 'Recently Added Stock', 'All ' ~ recent_stock|length ~ ' stock receipts from the last 7 days.', recent_stock_table(recent_stock)) }}
+{% endif %}
 {% endblock %}

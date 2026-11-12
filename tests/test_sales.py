@@ -1367,3 +1367,44 @@ def test_sales_register_view_defaults_to_current_month_when_no_date_params(admin
     body = resp.get_data(as_text=True)
     assert "Old Timer" in body
     assert "Current Patient" not in body
+
+
+def test_sales_register_search_matches_product_name_and_summarises(app):
+    from sales import product_sales_summary
+    flexon = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        from db import get_db
+        get_db().execute("UPDATE medicines SET name = 'Flexon 500' WHERE id = ?", (flexon,))
+        get_db().commit()
+        user_id = create_user("staff1", "pw", "staff")
+        s1 = create_sale(user_id, [{"medicine_id": flexon, "unit_name": "Tablet", "quantity": 4}])
+        s2 = create_sale(user_id, [{"medicine_id": flexon, "unit_name": "Tablet", "quantity": 2}])
+        s_old = create_sale(user_id, [{"medicine_id": flexon, "unit_name": "Tablet", "quantity": 10}])
+        _set_sale_timestamp(s_old["sale_id"], "2020-01-01 10:00:00")
+        item = get_sale(s2["sale_id"])["items"][0]["id"]
+        create_sale_return(s2["sale_id"], [{"sale_item_id": item, "quantity": 1}], "wrong_item", user_id)
+
+        today = datetime.date.today().isoformat()
+        ids = {r["id"] for r in sales_register(date_from=today, date_to=today, search="flex")}
+        assert ids == {s1["sale_id"], s2["sale_id"]}
+
+        [row] = product_sales_summary("flex", date_from=today, date_to=today)
+        assert row["base_units_sold"] == 6
+        assert row["base_units_returned"] == 1
+        assert row["net_base_units"] == 5
+        assert row["gross_amount"] == pytest.approx(15.0)
+        assert row["net_amount"] == pytest.approx(12.5)
+
+
+def test_sales_register_view_has_today_and_month_buttons_and_product_panel(admin_client, app):
+    flexon = _setup_medicine(app)
+    with app.app_context():
+        from auth import create_user
+        user_id = create_user("staff1", "pw", "staff")
+        create_sale(user_id, [{"medicine_id": flexon, "unit_name": "Tablet", "quantity": 4}])
+    today = datetime.date.today().isoformat()
+    body = admin_client.get(f"/sales/register?date_from={today}&date_to={today}&q=cetamol").get_data(as_text=True)
+    assert ">Today</button>" in body and ">This Month</button>" in body
+    assert "Product sales for" in body
+    assert "Rs 10.00" in body

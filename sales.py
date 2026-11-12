@@ -272,7 +272,8 @@ def list_sales(user_id=None):
 
 def sales_register(date_from=None, date_to=None, search=None):
     """Sales Register: every sale (voided or not) across the whole shop, optionally
-    scoped by a timestamp date range and/or a patient/doctor/username search term,
+    scoped by a timestamp date range and/or a search term matching patient,
+    doctor, username, receipt number, or any sold medicine's name/code,
     with each row's already-returned amount netted out via a joined subquery --
     sales.total itself is never mutated by a return, so this is the only place
     that number is adjusted for display.
@@ -298,13 +299,72 @@ def sales_register(date_from=None, date_to=None, search=None):
         conditions.append("date(s.timestamp) <= ?")
         params.append(date_to)
     if search:
-        conditions.append("(s.patient_name LIKE ? OR s.doctor_name LIKE ? OR u.username LIKE ?)")
+        conditions.append(
+            "(s.patient_name LIKE ? OR s.doctor_name LIKE ? OR u.username LIKE ? "
+            "OR s.receipt_number LIKE ? "
+            "OR EXISTS (SELECT 1 FROM sale_items si JOIN medicines m ON m.id = si.medicine_id "
+            "           WHERE si.sale_id = s.id AND (m.name LIKE ? OR m.code LIKE ?)))"
+        )
         like = f"%{search}%"
-        params.extend([like, like, like])
+        params.extend([like] * 6)
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY s.id DESC"
     return db.execute(query, params).fetchall()
+
+
+def product_sales_summary(search, date_from=None, date_to=None):
+    """Per-medicine sales totals for medicines whose name or code matches
+    `search`, over non-voided sales in the date range: units sold (base units),
+    gross amount, non-voided returns, and net -- so searching "flexon" on the
+    Sales Register answers "how much Flexon did we sell today / this month".
+    """
+    if not search:
+        return []
+    db = get_db()
+    date_conditions = []
+    date_params = []
+    if date_from:
+        date_conditions.append("date(s.timestamp) >= ?")
+        date_params.append(date_from)
+    if date_to:
+        date_conditions.append("date(s.timestamp) <= ?")
+        date_params.append(date_to)
+    date_sql = "".join(" AND " + c for c in date_conditions)
+    like = f"%{search}%"
+    return db.execute(
+        f"""
+        SELECT m.id AS medicine_id, m.code, m.name,
+               sold.sale_count, sold.base_units_sold, sold.gross_amount,
+               COALESCE(ret.base_units_returned, 0) AS base_units_returned,
+               COALESCE(ret.returned_amount, 0) AS returned_amount,
+               sold.gross_amount - COALESCE(ret.returned_amount, 0) AS net_amount,
+               sold.base_units_sold - COALESCE(ret.base_units_returned, 0) AS net_base_units
+        FROM medicines m
+        JOIN (
+            SELECT si.medicine_id,
+                   COUNT(DISTINCT si.sale_id) AS sale_count,
+                   SUM(si.qty_in_base_units * si.quantity) AS base_units_sold,
+                   SUM(si.subtotal) AS gross_amount
+            FROM sale_items si JOIN sales s ON s.id = si.sale_id
+            WHERE s.voided = 0{date_sql}
+            GROUP BY si.medicine_id
+        ) sold ON sold.medicine_id = m.id
+        LEFT JOIN (
+            SELECT sri.medicine_id,
+                   SUM(sri.base_units_returned) AS base_units_returned,
+                   SUM(sri.amount) AS returned_amount
+            FROM sale_return_items sri
+            JOIN sale_returns sr ON sr.id = sri.sale_return_id
+            JOIN sales s ON s.id = sr.sale_id
+            WHERE sr.voided = 0 AND s.voided = 0{date_sql}
+            GROUP BY sri.medicine_id
+        ) ret ON ret.medicine_id = m.id
+        WHERE m.name LIKE ? OR m.code LIKE ?
+        ORDER BY m.name
+        """,
+        (*date_params, *date_params, like, like),
+    ).fetchall()
 
 
 # --- sale returns ------------------------------------------------------------
@@ -540,9 +600,16 @@ def sales_register_view():
         "returned": sum(s["returned_amount"] for s in non_voided),
         "net": sum(s["net_total"] for s in non_voided),
     }
+    today = datetime.date.today()
+    products = product_sales_summary(search_term, date_from=date_from, date_to=date_to)
     return render_template(
         "sales_register.html", sales=sales, date_from=date_from, date_to=date_to,
-        search=search_term, totals=totals,
+        search=search_term, totals=totals, products=products,
+        product_totals={
+            "units": sum(p["net_base_units"] for p in products),
+            "net": sum(p["net_amount"] for p in products),
+        },
+        today=today.isoformat(), month_start=today.replace(day=1).isoformat(),
     )
 
 

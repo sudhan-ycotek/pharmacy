@@ -170,3 +170,65 @@ def test_dashboard_recent_transactions_filtered_by_role(app, client):
     client.post("/login", data={"username": "boss", "password": "bosspass"})
     admin_body = client.get("/").get_data(as_text=True)
     assert "owner" in admin_body
+
+
+def _set_latest_receipt_batch(medicine_id, batch_number, expiry_date):
+    from db import get_db
+    db = get_db()
+    db.execute(
+        "UPDATE stock_receipts SET batch_number = ?, expiry_date = ? WHERE id = "
+        "(SELECT MAX(id) FROM stock_receipts WHERE medicine_id = ?)",
+        (batch_number, expiry_date, medicine_id),
+    )
+    db.commit()
+
+
+def test_dashboard_alerts_batches_near_expiry(admin_client, app):
+    import datetime
+    soon = (datetime.date.today() + datetime.timedelta(days=20)).isoformat()
+    far = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
+    with app.app_context():
+        near = make_box_file_medicine(name="Flexon")
+        later = make_box_file_medicine(name="Farmed")
+        make_stock(near, "Tablet", 10)
+        _set_latest_receipt_batch(near, "BN-NEAR", soon)
+        make_stock(later, "Tablet", 10)
+        _set_latest_receipt_batch(later, "BN-FAR", far)
+
+    body = admin_client.get("/").get_data(as_text=True)
+    panel = body[body.index("<h2>Expiring Soon</h2>"):body.index("<h2>Medicines running low</h2>")]
+    assert "BN-NEAR" in panel and soon in panel and "MED-0001" in panel and "Flexon" in panel
+    assert "BN-FAR" not in panel
+
+
+def test_expiring_batches_skips_medicines_with_no_stock(app):
+    from inventory import expiring_batches, record_stock_adjustment
+    with app.app_context():
+        user_id = create_user("adm", "pw", "admin")
+        m = make_box_file_medicine(name="Gone")
+        make_stock(m, "Tablet", 5)
+        _set_latest_receipt_batch(m, "B1", "2020-01-01")
+        assert [r["batch_number"] for r in expiring_batches()] == ["B1"]
+        assert expiring_batches()[0]["days_left"] < 0
+        record_stock_adjustment(m, "Tablet", 5, "decrease", "damaged", user_id)
+        assert expiring_batches() == []
+
+
+def test_dashboard_low_stock_shows_six_rows_and_view_all_modal(admin_client, app):
+    with app.app_context():
+        for i in range(8):
+            make_box_file_medicine(name=f"Lowmed{i}", low_stock_threshold=100)
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "View all (8)" in body
+    assert 'id="low-stock-modal"' in body
+    # first 6 inline, all 8 in the modal
+    assert body.count("Lowmed7") == 1  # 8th row: modal only
+    assert body.count("Lowmed0") == 2
+
+
+def test_dashboard_no_view_all_when_few_rows(admin_client, app):
+    with app.app_context():
+        make_box_file_medicine(name="Lowmed", low_stock_threshold=100)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "low-stock-modal" not in body

@@ -4,7 +4,9 @@ from flask import Blueprint, render_template
 
 from auth import current_user, login_required
 from inventory import (
+    EXPIRY_ALERT_DAYS,
     daily_stock_received,
+    expiring_batches,
     low_stock_medicines,
     recent_stock_receipts,
     stock_received_this_month,
@@ -14,6 +16,7 @@ from sales import daily_sales_totals, list_sales
 
 bp = Blueprint("dashboard", __name__)
 
+DASHBOARD_PREVIEW_ROWS = 6  # rows shown inline per panel; the rest are behind "View all"
 SPARK_DAYS = 7  # trailing days of history in each sparkline, in addition to today
 
 
@@ -74,6 +77,9 @@ def home():
         low_stock=low_stock_medicines(),
         recent_stock=recent_stock_receipts(days=7),
         recent_sales=recent_sales[:5],
+        expiring=expiring_batches(),
+        expiry_alert_days=EXPIRY_ALERT_DAYS,
+        preview_rows=DASHBOARD_PREVIEW_ROWS,
 
         todays_total=revenue_values[-1],
         items_sold_today=items_values[-1],

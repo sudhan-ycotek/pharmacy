@@ -364,6 +364,67 @@ def recent_stock_receipts(days=7):
     ).fetchall()
 
 
+EXPIRY_ALERT_DAYS = 90  # batches expiring within this many days are flagged on the dashboard
+
+
+def expiring_batches(days=EXPIRY_ALERT_DAYS):
+    """Purchase batches whose expiry_date falls on/before today + `days`
+    (already-expired batches included), for medicines that still have stock.
+
+    Per-batch remaining quantity isn't tracked (no FIFO consumption), so a
+    batch is shown as long as its medicine has any stock left; receipts of the
+    same batch_number + expiry_date are merged into one row.
+    """
+    db = get_db()
+    return db.execute(
+        """
+        SELECT m.id AS medicine_id, m.code AS medicine_code, m.name AS medicine_name,
+               m.stock_in_base_units,
+               sr.batch_number, sr.expiry_date,
+               SUM(sr.base_units_received) AS base_units_received,
+               CAST(julianday(sr.expiry_date) - julianday(date('now', 'localtime')) AS INTEGER)
+                   AS days_left
+        FROM stock_receipts sr
+        JOIN medicines m ON m.id = sr.medicine_id
+        WHERE sr.expiry_date IS NOT NULL AND sr.expiry_date != ''
+          AND sr.expiry_date <= date('now', 'localtime', ?)
+          AND m.stock_in_base_units > 0
+        GROUP BY m.id, sr.batch_number, sr.expiry_date
+        ORDER BY sr.expiry_date, m.name
+        """,
+        (f"+{int(days)} days",),
+    ).fetchall()
+
+
+def batches_by_medicine():
+    """{medicine_id: [batch rows]} for every medicine that has received stock.
+
+    Receipts sharing the same batch_number + expiry_date are merged; ordered by
+    expiry (soonest first, undated last) so the Products page can show each
+    medicine's batches when its row is expanded.
+    """
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT sr.medicine_id, sr.batch_number, sr.expiry_date,
+               SUM(sr.base_units_received) AS base_units_received,
+               MAX(sr.created_at) AS last_received,
+               GROUP_CONCAT(DISTINCT v.name) AS vendor_names
+        FROM stock_receipts sr
+        LEFT JOIN purchase_bills pb ON pb.id = sr.purchase_bill_id
+        LEFT JOIN vendors v ON v.id = pb.vendor_id
+        GROUP BY sr.medicine_id, sr.batch_number, sr.expiry_date
+        ORDER BY sr.medicine_id,
+                 (sr.expiry_date IS NULL OR sr.expiry_date = ''), sr.expiry_date,
+                 MAX(sr.created_at) DESC
+        """
+    ).fetchall()
+    result = {}
+    for r in rows:
+        result.setdefault(r["medicine_id"], []).append(r)
+    return result
+
+
 def low_stock_medicines():
     db = get_db()
     return db.execute(
@@ -486,7 +547,9 @@ def list_medicines_view():
     medicines = list_medicines()
     prices = {m["id"]: unit_prices(m["id"]) for m in medicines}
     return render_template(
-        "medicines.html", medicines=medicines, prices=prices, companies=list_companies()
+        "medicines.html", medicines=medicines, prices=prices, companies=list_companies(),
+        batches=batches_by_medicine(), today=datetime.date.today().isoformat(),
+        expiry_alert_date=(datetime.date.today() + datetime.timedelta(days=EXPIRY_ALERT_DAYS)).isoformat(),
     )
 
 

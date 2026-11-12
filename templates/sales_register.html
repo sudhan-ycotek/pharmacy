@@ -1,9 +1,20 @@
 {% extends "base.html" %}
 {% block page_title %}Sales Register{% endblock %}
-{% block page_desc %}Every sale across the whole shop — filter by date range or patient/doctor/username, with returns netted out.{% endblock %}
+{% block page_desc %}Every sale across the whole shop — filter by date range or search patient, doctor, username, receipt or product, with returns netted out.{% endblock %}
 {% block content %}
+{% set is_today = date_from == today and date_to == today %}
+{% set is_month = date_from == month_start and date_to == today %}
 <div class="panel-head" style="margin-bottom:14px">
   <form method="get" class="field-row" style="flex-wrap:wrap; flex:1">
+    <div class="field">
+      <label>Quick range</label>
+      <div class="quick-range">
+        <button type="submit" class="btn btn-secondary {{ 'active' if is_today }}"
+                onclick="setRange('{{ today }}', '{{ today }}')">Today</button>
+        <button type="submit" class="btn btn-secondary {{ 'active' if is_month }}"
+                onclick="setRange('{{ month_start }}', '{{ today }}')">This Month</button>
+      </div>
+    </div>
     <div class="field">
       <label>From</label>
       <input type="date" name="date_from" value="{{ date_from or '' }}">
@@ -13,8 +24,8 @@
       <input type="date" name="date_to" value="{{ date_to or '' }}">
     </div>
     <div class="field">
-      <label>Patient / Doctor / Username</label>
-      <input type="text" name="q" value="{{ search or '' }}" placeholder="Search…">
+      <label>Product / Patient / Doctor / Receipt</label>
+      <input type="text" name="q" value="{{ search or '' }}" placeholder="e.g. Flexon">
     </div>
     <div class="field">
       <label>&nbsp;</label>
@@ -37,6 +48,60 @@
     <div class="value">Rs {{ "%.2f"|format(totals['net']) }}</div>
   </div>
 </div>
+
+{% if search %}
+<div class="card panel">
+  <div class="panel-head">
+    <div>
+      <h2>Product sales for “{{ search }}”</h2>
+      <p class="panel-desc">
+        {% if date_from and date_to and date_from == date_to %}On {{ date_from }}{% elif date_from or date_to %}{{ date_from or 'start' }} to {{ date_to or 'today' }}{% else %}All time{% endif %}
+        — non-voided sales, returns netted out. Quantities in base units (tablets / bottles).
+      </p>
+    </div>
+  </div>
+  {% if products %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th><th>Medicine</th><th class="num">Sales</th>
+          <th class="num">Qty Sold</th><th class="num">Qty Returned</th><th class="num">Net Qty</th>
+          <th class="num">Gross</th><th class="num">Returned</th><th class="num">Net Sales</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in products %}
+      <tr>
+        <td>{{ p['code'] or '—' }}</td>
+        <td>{{ p['name'] }}</td>
+        <td class="num">{{ p['sale_count'] }}</td>
+        <td class="num">{{ p['base_units_sold'] }}</td>
+        <td class="num">{{ p['base_units_returned'] }}</td>
+        <td class="num">{{ p['net_base_units'] }}</td>
+        <td class="num">Rs {{ "%.2f"|format(p['gross_amount']) }}</td>
+        <td class="num">Rs {{ "%.2f"|format(p['returned_amount']) }}</td>
+        <td class="num"><strong>Rs {{ "%.2f"|format(p['net_amount']) }}</strong></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+      {% if products|length > 1 %}
+      <tfoot>
+        <tr>
+          <th colspan="5">Total</th>
+          <th class="num">{{ product_totals['units'] }}</th>
+          <th colspan="2"></th>
+          <th class="num">Rs {{ "%.2f"|format(product_totals['net']) }}</th>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  {% else %}
+  <p class="panel-desc">No product matching “{{ search }}” was sold in this period.</p>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="card panel">
   <div class="table-scroll">
@@ -78,4 +143,12 @@
   <p class="panel-desc">No sales match this filter.</p>
   {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+function setRange(from, to) {
+  document.querySelector('input[name="date_from"]').value = from;
+  document.querySelector('input[name="date_to"]').value = to;
+}
+</script>
 {% endblock %}
