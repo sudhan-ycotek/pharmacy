@@ -1261,12 +1261,17 @@ def test_sales_register_nets_out_return_amount_without_mutating_sale_total(app):
         assert get_sale(sale_id)["sale"]["total"] == pytest.approx(10.0)
 
 
+_TOTAL_KEYS = {"Gross Sales": "gross", "Returned": "returned", "Net Revenue": "net"}
+
+
 def _stat_card_value(body, label):
+    """Read a figure from the register's bottom Total row (tfoot)."""
+    key = _TOTAL_KEYS[label]
     match = re.search(
-        r'<div class="label">' + re.escape(label) + r'</div>\s*<div class="value">Rs\s*([\d.]+)</div>',
+        r'<td class="num" data-total="' + key + r'">Rs\s*([\d.]+)</td>',
         body,
     )
-    assert match, f"could not find stat card for {label!r} in response body"
+    assert match, f"could not find total for {label!r} in response body"
     return float(match.group(1))
 
 

@@ -159,10 +159,20 @@ a:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline
   .app { grid-template-columns:1fr; }
 }
 
-.modal.modal-xl { max-width:960px; max-height:calc(100vh - 40px); display:flex; flex-direction:column; padding:22px 24px; }
-.modal-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px; }
-.modal-body { overflow:auto; min-height:0; }
+.modal.modal-xl { width:min(1280px, 100%); max-width:none; max-height:calc(100vh - 40px); display:flex; flex-direction:column; padding:22px 24px; }
+.modal-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px; flex:none; }
+.modal-body { flex:1 1 auto; overflow:auto; min-height:0; overscroll-behavior:contain; }
+/* One scroll container (modal-body) so the sticky header sticks to it. */
+.modal-body .table-scroll { overflow:visible; }
 .modal-body thead th { position:sticky; top:0; background:var(--surface); z-index:1; }
+
+/* Back button in the top bar */
+.topbar-left { display:flex; align-items:flex-start; gap:14px; }
+.back-btn { display:inline-flex; align-items:center; gap:6px; margin-top:2px; white-space:nowrap; }
+.back-btn svg { width:15px; height:15px; }
+
+/* Totals row at the bottom of a table */
+tfoot td, tfoot th { white-space:nowrap; border-top:2px solid var(--border); border-bottom:none; font-weight:700; color:var(--text); background:var(--bg); }
 
 /* Products: click a row to show its purchase batches */
 #medicines-table tbody tr.medicine-row { cursor:pointer; }

@@ -34,21 +34,6 @@
   </form>
 </div>
 
-<div class="stat-row">
-  <div class="card stat-card">
-    <div class="label">Gross Sales</div>
-    <div class="value">Rs {{ "%.2f"|format(totals['gross']) }}</div>
-  </div>
-  <div class="card stat-card">
-    <div class="label">Returned</div>
-    <div class="value">Rs {{ "%.2f"|format(totals['returned']) }}</div>
-  </div>
-  <div class="card stat-card">
-    <div class="label">Net Revenue</div>
-    <div class="value">Rs {{ "%.2f"|format(totals['net']) }}</div>
-  </div>
-</div>
-
 {% if search %}
 <div class="card panel">
   <div class="panel-head">
@@ -137,6 +122,17 @@
       </tr>
       {% endfor %}
       </tbody>
+      {% if sales %}
+      <tfoot>
+        <tr>
+          <td colspan="5">Total{% if sales|selectattr('voided')|list %} <span class="panel-desc">(voided sales excluded)</span>{% endif %}</td>
+          <td class="num" data-total="gross">Rs {{ "%.2f"|format(totals['gross']) }}</td>
+          <td class="num" data-total="returned">Rs {{ "%.2f"|format(totals['returned']) }}</td>
+          <td class="num" data-total="net">Rs {{ "%.2f"|format(totals['net']) }}</td>
+          <td colspan="5"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
     </table>
   </div>
   {% if not sales %}

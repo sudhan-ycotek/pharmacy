@@ -119,12 +119,21 @@ function batchRowFor(row) {
   return document.querySelector('tr.batch-row[data-batch-for="' + row.dataset.medicineId + '"]');
 }
 
-function toggleBatches(row) {
-  var batchRow = batchRowFor(row);
-  var open = batchRow.hidden;
-  batchRow.hidden = !open;
+function setExpanded(row, open) {
+  batchRowFor(row).hidden = !open;
   row.classList.toggle("expanded", open);
   row.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function toggleBatches(row) {
+  var open = batchRowFor(row).hidden;
+  if (open) {
+    // Only one medicine's batches open at a time: close any other open one.
+    medicineRows.forEach(function (other) {
+      if (other !== row && other.classList.contains("expanded")) { setExpanded(other, false); }
+    });
+  }
+  setExpanded(row, open);
 }
 
 medicineRows.forEach(function (row) {
